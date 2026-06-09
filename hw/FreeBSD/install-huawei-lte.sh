@@ -1,8 +1,7 @@
 #!/bin/sh
 set -eu
 
-MODE_VENDOR="0x12d1"
-MODE_PRODUCT="0x1f01"
+USB_DEVICE_NAME="huaweimobile"
 LTE_IFACE="ue0"
 DHCPCONF="/etc/dhclient.conf"
 
@@ -75,38 +74,105 @@ get_usb_field() {
     field="$2"
 
     usbconfig -d "$dev" dump_device_desc 2>/dev/null |
-        awk -v field="$field" '$1 == field { print $3; exit }'
+        awk -v field="$field" '
+            $1 == field {
+                value = tolower($3)
+                print value
+                exit
+            }
+        '
 }
 
-find_huawei_storage_device() {
-    usbconfig |
-        awk -F: '/^ugen[0-9]+\.[0-9]+:/ { print $1 }' |
-        while IFS= read -r dev; do
-            vendor="$(get_usb_field "$dev" idVendor || true)"
-            product="$(get_usb_field "$dev" idProduct || true)"
+get_usb_summary() {
+    dev="$1"
 
-            if [ "$vendor" = "$MODE_VENDOR" ] && [ "$product" = "$MODE_PRODUCT" ]; then
+    usbconfig |
+        awk -F: -v dev="$dev" '$1 == dev { print; exit }'
+}
+
+get_usb_config_desc() {
+    dev="$1"
+
+    usbconfig -d "$dev" dump_curr_config_desc 2>/dev/null ||
+        usbconfig -d "$dev" dump_all_config_desc 2>/dev/null ||
+        true
+}
+
+list_usb_devices() {
+    usbconfig | awk -F: '$1 ~ /^ugen[0-9][0-9]*\.[0-9][0-9]*$/ { print $1 }'
+}
+
+find_lte_device_from_summary() {
+    usbconfig |
+        awk -F: -v name="$USB_DEVICE_NAME" '
+            tolower($0) ~ name && $1 ~ /^ugen[0-9][0-9]*\.[0-9][0-9]*$/ {
+                print $1
+                found = 1
+                exit 0
+            }
+            END { exit(found ? 0 : 1) }
+        '
+}
+
+descriptor_contains_lte_name() {
+    dev="$1"
+
+    usbconfig -d "$dev" dump_device_desc 2>/dev/null |
+        awk -v name="$USB_DEVICE_NAME" '
+            {
+                line = tolower($0)
+                gsub(/[^a-z0-9]/, "", line)
+                if (line ~ name) {
+                    found = 1
+                }
+            }
+            END { exit(found ? 0 : 1) }
+        '
+}
+
+find_lte_device_from_descriptors() {
+    list_usb_devices |
+        while IFS= read -r dev; do
+            if descriptor_contains_lte_name "$dev"; then
                 printf '%s\n' "$dev"
                 return 0
             fi
         done
 }
 
-find_huawei_device() {
-    usbconfig |
-        awk -F: '/^ugen[0-9]+\.[0-9]+:/ { print $1 }' |
-        while IFS= read -r dev; do
-            vendor="$(get_usb_field "$dev" idVendor || true)"
-
-            if [ "$vendor" = "$MODE_VENDOR" ]; then
-                printf '%s\n' "$dev"
-                return 0
-            fi
-        done
+find_lte_device() {
+    find_lte_device_from_summary ||
+        find_lte_device_from_descriptors
 }
 
 lte_interface_is_present() {
     ifconfig "$LTE_IFACE" >/dev/null 2>&1
+}
+
+detect_lte_usb_mode() {
+    dev="$1"
+
+    if lte_interface_is_present; then
+        printf '%s\n' "ethernet"
+        return
+    fi
+
+    summary="$(get_usb_summary "$dev" | tr '[:upper:]' '[:lower:]')"
+    config_desc="$(get_usb_config_desc "$dev" | tr '[:upper:]' '[:lower:]')"
+
+    if printf '%s\n%s\n' "$summary" "$config_desc" | grep -q 'mass storage'; then
+        if ! printf '%s\n' "$config_desc" | grep -Eq 'communications|cdc|network|ethernet'; then
+            printf '%s\n' "storage"
+            return
+        fi
+    fi
+
+    if printf '%s\n' "$config_desc" | grep -Eq 'communications|cdc|network|ethernet'; then
+        printf '%s\n' "interface"
+        return
+    fi
+
+    printf '%s\n' "unknown"
 }
 
 wait_for_lte_interface() {
@@ -124,9 +190,9 @@ wait_for_lte_interface() {
 }
 
 switch_huawei_lte_device() {
-    huawei_dev="$(find_huawei_device || true)"
-    if [ -n "$huawei_dev" ]; then
-        log "Found Huawei USB device at $huawei_dev"
+    lte_dev="$(find_lte_device || true)"
+    if [ -n "$lte_dev" ]; then
+        log "Found HUAWEIMOBILE USB device at $lte_dev"
     fi
 
     if lte_interface_is_present; then
@@ -134,19 +200,31 @@ switch_huawei_lte_device() {
         return 0
     fi
 
-    storage_dev="$(find_huawei_storage_device || true)"
-    if [ -z "$storage_dev" ]; then
-        if [ -n "$huawei_dev" ]; then
-            log "Found Huawei USB device $huawei_dev, but not storage-mode $MODE_VENDOR:$MODE_PRODUCT"
-        else
-            log "No Huawei $MODE_VENDOR USB device found"
-        fi
+    if [ -z "$lte_dev" ]; then
+        log "No HUAWEIMOBILE USB device found"
         return 1
     fi
 
-    log "Found Huawei storage-mode LTE device at $storage_dev"
-    log "Sending Huawei mode-switch command"
-    if ! usb_modeswitch -v "$MODE_VENDOR" -p "$MODE_PRODUCT" -J; then
+    lte_mode="$(detect_lte_usb_mode "$lte_dev")"
+    log "Current LTE USB mode appears to be: $lte_mode"
+    if [ "$lte_mode" = "interface" ]; then
+        log "USB device already exposes a network-style interface; waiting for $LTE_IFACE"
+        if wait_for_lte_interface; then
+            log "$LTE_IFACE is present; dongle is already in network mode"
+            return 0
+        fi
+        log "$LTE_IFACE did not appear even though the USB device looks interface-capable"
+    fi
+
+    mode_vendor="$(get_usb_field "$lte_dev" idVendor || true)"
+    mode_product="$(get_usb_field "$lte_dev" idProduct || true)"
+    if [ -z "$mode_vendor" ] || [ -z "$mode_product" ]; then
+        log "Could not read USB vendor/product IDs for $lte_dev"
+        return 1
+    fi
+
+    log "Sending Huawei mode-switch command for $lte_dev ($mode_vendor:$mode_product)"
+    if ! usb_modeswitch -v "$mode_vendor" -p "$mode_product" -J; then
         log "usb_modeswitch exited non-zero; checking whether the device re-enumerated anyway"
     fi
 
