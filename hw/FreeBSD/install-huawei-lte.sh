@@ -7,6 +7,7 @@ LTE_APN="${LTE_APN:-}"
 LTE_AT_PORT="${LTE_AT_PORT:-}"
 LTE_MAX_ATTEMPTS="${LTE_MAX_ATTEMPTS:-2}"
 LTE_ENABLE_SERIAL_FALLBACK="${LTE_ENABLE_SERIAL_FALLBACK:-1}"
+LTE_AT_READ_TIMEOUT="${LTE_AT_READ_TIMEOUT:-1}"
 DHCPCONF="/etc/dhclient.conf"
 NETWORKING_CONFIGURED_IFACE=""
 
@@ -416,13 +417,14 @@ query_at_port() {
         return 1
     fi
 
+    timeout "$LTE_AT_READ_TIMEOUT" dd bs=1 count=512 <&3 >/dev/null 2>&1 || true
     printf '%s\r\n' "$command" >&3 || {
         exec 3<&-
         exec 3>&-
         return 1
     }
 
-    response="$(timeout 2 dd bs=1 count=512 <&3 2>/dev/null | tr '\r' '\n' | awk 'NF { print }')"
+    response="$(timeout "$LTE_AT_READ_TIMEOUT" dd bs=1 count=512 <&3 2>/dev/null | tr '\r' '\n' | awk 'NF { print }')"
     exec 3<&-
     exec 3>&-
 
@@ -443,12 +445,18 @@ log_huawei_at_status() {
         log "Probing AT status on $port"
         stty -f "$port" 115200 cs8 -parenb -cstopb -echo >/dev/null 2>&1 || true
         query_at_port "$port" "AT" || continue
+        write_at_port "$port" "ATE0" || true
         query_at_port "$port" "ATI" || true
+        query_at_port "$port" "AT+CPIN?" || true
+        query_at_port "$port" "AT+CSQ" || true
         query_at_port "$port" "AT^SETPORT?" || true
         query_at_port "$port" "AT+CGDCONT?" || true
         query_at_port "$port" "AT+CGATT?" || true
         query_at_port "$port" "AT+CREG?" || true
+        query_at_port "$port" "AT+CGREG?" || true
         query_at_port "$port" "AT+CEREG?" || true
+        query_at_port "$port" "AT+COPS?" || true
+        query_at_port "$port" "AT^SYSINFOEX" || true
         query_at_port "$port" "AT^NDISSTATQRY?" || true
         return 0
     done
@@ -482,9 +490,15 @@ send_huawei_serial_connect() {
             continue
         fi
 
+        write_at_port "$port" "ATE0" || true
+        sleep 1
         write_at_port "$port" "ATZ" || true
         sleep 1
         write_at_port "$port" "ATQ0 V1 E1" || true
+        sleep 1
+        write_at_port "$port" "AT+CFUN=1" || true
+        sleep 1
+        write_at_port "$port" "AT+COPS=0" || true
         sleep 1
 
         if [ -n "$LTE_APN" ]; then
@@ -492,9 +506,16 @@ send_huawei_serial_connect() {
             sleep 1
         fi
 
+        write_at_port "$port" "AT+CGATT=1" || true
+        sleep 2
         write_at_port "$port" "$ndis_command" || true
         sent=0
         sleep 1
+
+        query_at_port "$port" "AT+CGATT?" || true
+        query_at_port "$port" "AT+CREG?" || true
+        query_at_port "$port" "AT+CEREG?" || true
+        query_at_port "$port" "AT^NDISSTATQRY?" || true
 
         if lte_interface_has_carrier || lte_interface_has_ipv4; then
             log "$LTE_IFACE responded after serial AT init on $port"
