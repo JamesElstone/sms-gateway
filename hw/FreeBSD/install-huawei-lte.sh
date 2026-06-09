@@ -364,7 +364,7 @@ wait_for_lte_ipv4() {
 find_lte_serial_ports() {
     emitted=" "
 
-    for port in "$LTE_AT_PORT" /dev/cuaU0.1 /dev/cuaU0.0 /dev/cuaU0.2 /dev/cuaU1 /dev/cuaU0 /dev/cuaU2 /dev/cuaU3 /dev/cuaU4 /dev/cuaU*; do
+    for port in "$LTE_AT_PORT" /dev/cuaU0.0 /dev/cuaU0.2 /dev/cuaU0.1 /dev/cuaU1 /dev/cuaU0 /dev/cuaU2 /dev/cuaU3 /dev/cuaU4 /dev/cuaU*; do
         [ -n "$port" ] || continue
         case "$port" in
             *.init|*.lock) continue ;;
@@ -413,20 +413,18 @@ query_at_port() {
     port="$1"
     command="$2"
 
-    if ! { exec 3<> "$port"; } 2>/dev/null; then
-        return 1
-    fi
-
-    timeout "$LTE_AT_READ_TIMEOUT" dd bs=1 count=512 <&3 >/dev/null 2>&1 || true
-    printf '%s\r\n' "$command" >&3 || {
-        exec 3<&-
-        exec 3>&-
-        return 1
-    }
-
-    response="$(timeout "$LTE_AT_READ_TIMEOUT" dd bs=1 count=512 <&3 2>/dev/null | tr '\r' '\n' | awk 'NF { print }')"
-    exec 3<&-
-    exec 3>&-
+    response="$(
+        timeout 3 sh -c '
+            port="$1"
+            command="$2"
+            read_timeout="$3"
+            exec 3<> "$port" || exit 1
+            printf "%s\r\n" "$command" >&3 || exit 1
+            timeout "$read_timeout" dd bs=1 count=512 <&3 2>/dev/null
+        ' at-query "$port" "$command" "$LTE_AT_READ_TIMEOUT" |
+            tr '\r' '\n' |
+            awk 'NF { print }'
+    )"
 
     if [ -n "$response" ]; then
         log "$port $command -> $(printf '%s' "$response" | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g')"
