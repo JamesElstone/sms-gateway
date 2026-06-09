@@ -149,11 +149,46 @@ lte_interface_is_present() {
     ifconfig "$LTE_IFACE" >/dev/null 2>&1
 }
 
+lte_interface_status() {
+    if ! lte_interface_is_present; then
+        printf '%s\n' "missing"
+        return
+    fi
+
+    ifconfig "$LTE_IFACE" |
+        awk -F: '
+            /^[[:space:]]*status:/ {
+                sub(/^[[:space:]]+/, "", $2)
+                print $2
+                found = 1
+                exit
+            }
+            END {
+                if (!found) {
+                    print "unknown"
+                }
+            }
+        '
+}
+
+lte_interface_has_carrier() {
+    [ "$(lte_interface_status)" = "active" ]
+}
+
+lte_interface_has_ipv4() {
+    ifconfig "$LTE_IFACE" 2>/dev/null |
+        awk '$1 == "inet" { found = 1 } END { exit(found ? 0 : 1) }'
+}
+
 detect_lte_usb_mode() {
     dev="$1"
 
     if lte_interface_is_present; then
-        printf '%s\n' "ethernet"
+        if lte_interface_has_carrier; then
+            printf '%s\n' "ethernet-active"
+        else
+            printf '%s\n' "ethernet-no-carrier"
+        fi
         return
     fi
 
@@ -189,15 +224,38 @@ wait_for_lte_interface() {
     return 1
 }
 
+wait_for_lte_carrier() {
+    n=0
+    while [ "$n" -lt 30 ]; do
+        if lte_interface_has_carrier; then
+            return 0
+        fi
+
+        n=$((n + 1))
+        sleep 1
+    done
+
+    return 1
+}
+
+wait_for_lte_ipv4() {
+    n=0
+    while [ "$n" -lt 30 ]; do
+        if lte_interface_has_ipv4; then
+            return 0
+        fi
+
+        n=$((n + 1))
+        sleep 1
+    done
+
+    return 1
+}
+
 switch_huawei_lte_device() {
     lte_dev="$(find_lte_device || true)"
     if [ -n "$lte_dev" ]; then
         log "Found HUAWEIMOBILE USB device at $lte_dev"
-    fi
-
-    if lte_interface_is_present; then
-        log "$LTE_IFACE is already present; dongle appears to be in network mode"
-        return 0
     fi
 
     if [ -z "$lte_dev" ]; then
@@ -207,10 +265,21 @@ switch_huawei_lte_device() {
 
     lte_mode="$(detect_lte_usb_mode "$lte_dev")"
     log "Current LTE USB mode appears to be: $lte_mode"
+    if [ "$lte_mode" = "ethernet-active" ]; then
+        log "$LTE_IFACE is already active; dongle is in network mode"
+        return 0
+    fi
+
+    if [ "$lte_mode" = "ethernet-no-carrier" ]; then
+        log "$LTE_IFACE already exists but has status: $(lte_interface_status)"
+        log "Leaving USB mode alone; DHCP renewal will validate carrier"
+        return 0
+    fi
+
     if [ "$lte_mode" = "interface" ]; then
         log "USB device already exposes a network-style interface; waiting for $LTE_IFACE"
         if wait_for_lte_interface; then
-            log "$LTE_IFACE is present; dongle is already in network mode"
+            log "$LTE_IFACE is present; dongle is in network mode"
             return 0
         fi
         log "$LTE_IFACE did not appear even though the USB device looks interface-capable"
@@ -247,17 +316,27 @@ configure_freebsd_networking() {
 renew_lte_dhcp() {
     if ! lte_interface_is_present; then
         log "$LTE_IFACE is not present; skipping DHCP renewal"
-        return
+        return 1
     fi
 
     log "Renewing DHCP on $LTE_IFACE so ignore routers applies now"
-    if service netif restart "$LTE_IFACE"; then
-        return
+    if ! service netif restart "$LTE_IFACE"; then
+        log "service netif restart failed for $LTE_IFACE; trying dhclient directly"
+        dhclient -r "$LTE_IFACE" >/dev/null 2>&1 || true
+        dhclient "$LTE_IFACE"
     fi
 
-    log "service netif restart failed for $LTE_IFACE; trying dhclient directly"
-    dhclient -r "$LTE_IFACE" >/dev/null 2>&1 || true
-    dhclient "$LTE_IFACE"
+    if ! wait_for_lte_carrier; then
+        log "$LTE_IFACE is present but did not get carrier; current status: $(lte_interface_status)"
+        return 1
+    fi
+
+    if ! wait_for_lte_ipv4; then
+        log "$LTE_IFACE has carrier but did not get an IPv4 DHCP lease"
+        return 1
+    fi
+
+    return 0
 }
 
 main() {
@@ -273,7 +352,9 @@ main() {
 
     if switch_huawei_lte_device; then
         configure_freebsd_networking
-        renew_lte_dhcp
+        if ! renew_lte_dhcp; then
+            die "$LTE_IFACE is not ready after configuration"
+        fi
         log "Huawei LTE setup complete"
         log "Check with: ifconfig $LTE_IFACE; netstat -rn"
         return 0
