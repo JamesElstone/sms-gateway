@@ -389,6 +389,13 @@ build_huawei_ndis_command() {
     fi
 }
 
+write_at_port() {
+    port="$1"
+    command="$2"
+
+    { printf '%s\r\n' "$command" > "$port"; } 2>/dev/null
+}
+
 send_huawei_serial_connect() {
     ports="$(find_lte_serial_ports)"
     if [ -z "$ports" ]; then
@@ -410,23 +417,23 @@ send_huawei_serial_connect() {
         log "Trying serial AT init on $port"
         stty -f "$port" 115200 cs8 -parenb -cstopb -echo >/dev/null 2>&1 || true
 
-        if ! printf 'AT\r\n' > "$port"; then
+        if ! write_at_port "$port" "AT"; then
             log "Could not write AT probe to $port"
             continue
         fi
         sleep 1
 
-        printf 'ATZ\r\n' > "$port" || true
+        write_at_port "$port" "ATZ" || true
         sleep 1
-        printf 'ATQ0 V1 E1\r\n' > "$port" || true
+        write_at_port "$port" "ATQ0 V1 E1" || true
         sleep 1
 
         if [ -n "$LTE_APN" ]; then
-            printf 'AT+CGDCONT=1,"IP","%s"\r\n' "$LTE_APN" > "$port" || true
+            write_at_port "$port" "AT+CGDCONT=1,\"IP\",\"$LTE_APN\"" || true
             sleep 1
         fi
 
-        printf '%s\r\n' "$ndis_command" > "$port" || true
+        write_at_port "$port" "$ndis_command" || true
         sent=0
         sleep 3
 
@@ -588,12 +595,26 @@ renew_lte_dhcp() {
 
     if [ -n "$lte_dev" ] && lte_usb_uses_ncm "$lte_dev"; then
         send_huawei_serial_connect || true
-        send_huawei_ndis_connect "$lte_dev" || true
+        sleep 2
+        lte_dev="$(find_lte_device || true)"
+        if [ -n "$lte_dev" ]; then
+            send_huawei_ndis_connect "$lte_dev" || true
+        else
+            log "Huawei USB device is not visible after serial init; will rediscover on next attempt"
+        fi
         sleep 3
     fi
 
+    if ! wait_for_lte_interface; then
+        log "No ue* interface is present after modem init"
+        return 1
+    fi
+
     log "Bringing $LTE_IFACE up"
-    ifconfig "$LTE_IFACE" up
+    if ! ifconfig "$LTE_IFACE" up; then
+        log "Could not bring $LTE_IFACE up"
+        return 1
+    fi
 
     if ! lte_interface_has_carrier; then
         log "$LTE_IFACE status is $(lte_interface_status); trying DHCP anyway"
@@ -604,7 +625,10 @@ renew_lte_dhcp() {
     if [ -f "$pidfile" ]; then
         dhclient -r "$LTE_IFACE" >/dev/null 2>&1 || true
     fi
-    dhclient "$LTE_IFACE"
+    if ! dhclient "$LTE_IFACE"; then
+        log "dhclient failed on $LTE_IFACE"
+        return 1
+    fi
 
     if ! wait_for_lte_ipv4; then
         log "$LTE_IFACE did not get an IPv4 DHCP lease"
