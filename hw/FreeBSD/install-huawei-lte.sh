@@ -5,9 +5,10 @@ USB_DEVICE_NAME="huaweimobile"
 LTE_IFACE="${LTE_IFACE:-ue0}"
 LTE_APN="${LTE_APN:-}"
 LTE_AT_PORT="${LTE_AT_PORT:-}"
-LTE_MAX_ATTEMPTS="${LTE_MAX_ATTEMPTS:-2}"
+LTE_MAX_ATTEMPTS="${LTE_MAX_ATTEMPTS:-1}"
 LTE_ENABLE_SERIAL_FALLBACK="${LTE_ENABLE_SERIAL_FALLBACK:-1}"
 LTE_AT_READ_TIMEOUT="${LTE_AT_READ_TIMEOUT:-1}"
+LTE_NDIS_INDEXES="${LTE_NDIS_INDEXES:-2}"
 DHCPCONF="/etc/dhclient.conf"
 NETWORKING_CONFIGURED_IFACE=""
 
@@ -335,7 +336,7 @@ wait_for_lte_interface() {
 
 wait_for_lte_carrier() {
     n=0
-    while [ "$n" -lt 3 ]; do
+    while [ "$n" -lt 2 ]; do
         if lte_interface_has_carrier; then
             return 0
         fi
@@ -444,17 +445,12 @@ log_huawei_at_status() {
         stty -f "$port" 115200 cs8 -parenb -cstopb -echo >/dev/null 2>&1 || true
         query_at_port "$port" "AT" || continue
         write_at_port "$port" "ATE0" || true
-        query_at_port "$port" "ATI" || true
         query_at_port "$port" "AT+CPIN?" || true
         query_at_port "$port" "AT+CSQ" || true
-        query_at_port "$port" "AT^SETPORT?" || true
-        query_at_port "$port" "AT+CGDCONT?" || true
         query_at_port "$port" "AT+CGATT?" || true
         query_at_port "$port" "AT+CREG?" || true
-        query_at_port "$port" "AT+CGREG?" || true
         query_at_port "$port" "AT+CEREG?" || true
         query_at_port "$port" "AT+COPS?" || true
-        query_at_port "$port" "AT^SYSINFOEX" || true
         query_at_port "$port" "AT^NDISSTATQRY?" || true
         return 0
     done
@@ -505,7 +501,7 @@ send_huawei_serial_connect() {
         fi
 
         write_at_port "$port" "AT+CGATT=1" || true
-        sleep 2
+        sleep 1
         write_at_port "$port" "$ndis_command" || true
         sent=0
         sleep 1
@@ -556,13 +552,12 @@ send_huawei_ndis_connect() {
     encoded="$(at_command_to_usb_bytes "$ndis_command")"
     byte_args="$(printf '%s\n' "$encoded" | sed -n '1p')"
     byte_count="$(printf '%s\n' "$encoded" | sed -n '2p')"
-    ncm_iface="$(get_ncm_control_interface "$lte_dev" || true)"
     tried=" "
     accepted=0
 
     ifconfig "$LTE_IFACE" up 2>/dev/null || true
 
-    for request_index in 2 $ncm_iface 3 0; do
+    for request_index in $LTE_NDIS_INDEXES; do
         case "$tried" in
             *" $request_index "*) continue ;;
         esac
@@ -682,7 +677,7 @@ run_dhclient_once() {
         fi
 
         n=$((n + 1))
-        if [ "$n" -ge 15 ]; then
+        if [ "$n" -ge 8 ]; then
             kill "$dhclient_pid" >/dev/null 2>&1 || true
             wait "$dhclient_pid" >/dev/null 2>&1 || true
             return 1
@@ -778,6 +773,7 @@ attempt_lte_setup() {
 
     while [ "$attempt" -le "$LTE_MAX_ATTEMPTS" ]; do
         log "LTE discovery attempt $attempt of $LTE_MAX_ATTEMPTS"
+        clear_lte_static_test_address
         log_lte_snapshot
 
         if ! switch_huawei_lte_device; then
