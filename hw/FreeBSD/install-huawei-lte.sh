@@ -327,7 +327,9 @@ send_huawei_ndis_connect() {
     ncm_iface="$(get_ncm_control_interface "$lte_dev" || true)"
     tried=" "
 
-    for request_index in $ncm_iface 2 3 0; do
+    ifconfig "$LTE_IFACE" up 2>/dev/null || true
+
+    for request_index in 2 $ncm_iface 3 0; do
         case "$tried" in
             *" $request_index "*) continue ;;
         esac
@@ -337,11 +339,15 @@ send_huawei_ndis_connect() {
         # shellcheck disable=SC2086
         if usbconfig -d "$lte_dev" -i 0 do_request 0x21 0 0 "$request_index" "$byte_count" $byte_args >/dev/null 2>&1; then
             log "NDIS connect request accepted on USB interface index $request_index"
-            return 0
+            if wait_for_lte_carrier; then
+                log "$LTE_IFACE got carrier after NDIS connect on USB interface index $request_index"
+                return 0
+            fi
+            log "$LTE_IFACE still has status: $(lte_interface_status)"
         fi
     done
 
-    log "NDIS connect control request was not accepted"
+    log "NDIS connect did not bring $LTE_IFACE carrier up"
     return 1
 }
 
@@ -365,6 +371,10 @@ switch_huawei_lte_device() {
 
     if [ "$lte_mode" = "ethernet-no-carrier" ] || [ "$lte_mode" = "ncm-no-carrier" ]; then
         log "$LTE_IFACE already exists but has status: $(lte_interface_status)"
+        if [ "$lte_mode" = "ncm-no-carrier" ]; then
+            log "Skipping usb_modeswitch because the device is already in NCM mode"
+            return 0
+        fi
         log "Will try the Huawei mode-switch command again before DHCP"
     fi
 
