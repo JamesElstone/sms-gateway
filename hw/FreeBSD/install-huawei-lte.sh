@@ -4,6 +4,7 @@ set -eu
 USB_DEVICE_NAME="huaweimobile"
 LTE_IFACE="ue0"
 LTE_APN="${LTE_APN:-}"
+LTE_AT_PORT="${LTE_AT_PORT:-}"
 DHCPCONF="/etc/dhclient.conf"
 
 log() {
@@ -292,6 +293,80 @@ wait_for_lte_ipv4() {
     return 1
 }
 
+find_lte_serial_ports() {
+    emitted=" "
+
+    for port in "$LTE_AT_PORT" /dev/cuaU1 /dev/cuaU0 /dev/cuaU2 /dev/cuaU3 /dev/cuaU4; do
+        [ -n "$port" ] || continue
+        [ -c "$port" ] || continue
+
+        case "$emitted" in
+            *" $port "*) continue ;;
+        esac
+
+        emitted="$emitted$port "
+        printf '%s\n' "$port"
+    done
+}
+
+build_huawei_ndis_command() {
+    if [ -n "$LTE_APN" ]; then
+        printf 'AT^NDISDUP=1,1,"%s"\n' "$LTE_APN"
+    else
+        printf '%s\n' "AT^NDISDUP=1,1"
+    fi
+}
+
+send_huawei_serial_connect() {
+    ports="$(find_lte_serial_ports)"
+    if [ -z "$ports" ]; then
+        log "No /dev/cuaU* modem command ports found for serial AT init"
+        return 1
+    fi
+
+    if [ -n "$LTE_APN" ]; then
+        log "Sending Huawei serial AT connect commands using APN from LTE_APN"
+    else
+        log "Sending Huawei serial AT connect commands without explicit APN"
+        log "Set LTE_APN if the SIM requires a provider APN"
+    fi
+
+    ndis_command="$(build_huawei_ndis_command)"
+    sent=1
+
+    for port in $ports; do
+        log "Trying serial AT init on $port"
+        stty -f "$port" 115200 cs8 -parenb -cstopb -echo >/dev/null 2>&1 || true
+
+        if ! printf 'AT\r\n' > "$port"; then
+            log "Could not write AT probe to $port"
+            continue
+        fi
+        sleep 1
+
+        printf 'ATZ\r\n' > "$port" || true
+        sleep 1
+        printf 'ATQ0 V1 E1\r\n' > "$port" || true
+        sleep 1
+
+        if [ -n "$LTE_APN" ]; then
+            printf 'AT+CGDCONT=1,"IP","%s"\r\n' "$LTE_APN" > "$port" || true
+            sleep 1
+        fi
+
+        printf '%s\r\n' "$ndis_command" > "$port" || true
+        sent=0
+        sleep 3
+
+        if lte_interface_has_carrier || lte_interface_has_ipv4; then
+            log "$LTE_IFACE responded after serial AT init on $port"
+            return 0
+        fi
+    done
+
+    return "$sent"
+}
+
 at_command_to_usb_bytes() {
     command="$1"
 
@@ -431,6 +506,7 @@ renew_lte_dhcp() {
     fi
 
     if [ -n "$lte_dev" ] && lte_usb_uses_ncm "$lte_dev"; then
+        send_huawei_serial_connect || true
         send_huawei_ndis_connect "$lte_dev" || true
         sleep 3
     fi
@@ -465,6 +541,7 @@ main() {
     require_command sysrc
     require_command service
     require_command od
+    require_command stty
 
     ensure_dhclient_ignores_routers
     ensure_usb_modeswitch_package
