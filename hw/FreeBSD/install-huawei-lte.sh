@@ -296,8 +296,11 @@ wait_for_lte_ipv4() {
 find_lte_serial_ports() {
     emitted=" "
 
-    for port in "$LTE_AT_PORT" /dev/cuaU1 /dev/cuaU0 /dev/cuaU2 /dev/cuaU3 /dev/cuaU4; do
+    for port in "$LTE_AT_PORT" /dev/cuaU0.1 /dev/cuaU0.0 /dev/cuaU0.2 /dev/cuaU1 /dev/cuaU0 /dev/cuaU2 /dev/cuaU3 /dev/cuaU4 /dev/cuaU*; do
         [ -n "$port" ] || continue
+        case "$port" in
+            *.init|*.lock) continue ;;
+        esac
         [ -c "$port" ] || continue
 
         case "$emitted" in
