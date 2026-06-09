@@ -5,7 +5,8 @@ USB_DEVICE_NAME="huaweimobile"
 LTE_IFACE="${LTE_IFACE:-ue0}"
 LTE_APN="${LTE_APN:-}"
 LTE_AT_PORT="${LTE_AT_PORT:-}"
-LTE_MAX_ATTEMPTS="${LTE_MAX_ATTEMPTS:-3}"
+LTE_MAX_ATTEMPTS="${LTE_MAX_ATTEMPTS:-2}"
+LTE_ENABLE_SERIAL_FALLBACK="${LTE_ENABLE_SERIAL_FALLBACK:-1}"
 DHCPCONF="/etc/dhclient.conf"
 NETWORKING_CONFIGURED_IFACE=""
 
@@ -308,7 +309,7 @@ detect_lte_usb_mode() {
 
 wait_for_lte_interface() {
     n=0
-    while [ "$n" -lt 15 ]; do
+    while [ "$n" -lt 10 ]; do
         if lte_interface_is_present; then
             return 0
         fi
@@ -322,7 +323,7 @@ wait_for_lte_interface() {
 
 wait_for_lte_carrier() {
     n=0
-    while [ "$n" -lt 30 ]; do
+    while [ "$n" -lt 3 ]; do
         if lte_interface_has_carrier; then
             return 0
         fi
@@ -336,7 +337,7 @@ wait_for_lte_carrier() {
 
 wait_for_lte_ipv4() {
     n=0
-    while [ "$n" -lt 30 ]; do
+    while [ "$n" -lt 10 ]; do
         if lte_interface_has_ipv4; then
             return 0
         fi
@@ -435,7 +436,7 @@ send_huawei_serial_connect() {
 
         write_at_port "$port" "$ndis_command" || true
         sent=0
-        sleep 3
+        sleep 1
 
         if lte_interface_has_carrier || lte_interface_has_ipv4; then
             log "$LTE_IFACE responded after serial AT init on $port"
@@ -586,23 +587,70 @@ configure_freebsd_networking() {
     NETWORKING_CONFIGURED_IFACE="$LTE_IFACE"
 }
 
-renew_lte_dhcp() {
+run_dhclient_once() {
+    pidfile="/var/run/dhclient/dhclient.$LTE_IFACE.pid"
+    if [ -f "$pidfile" ]; then
+        dhclient -r "$LTE_IFACE" >/dev/null 2>&1 || true
+    fi
+
+    dhclient "$LTE_IFACE" &
+    dhclient_pid="$!"
+    n=0
+    while kill -0 "$dhclient_pid" >/dev/null 2>&1; do
+        if lte_interface_has_ipv4; then
+            wait "$dhclient_pid" >/dev/null 2>&1 || true
+            return 0
+        fi
+
+        n=$((n + 1))
+        if [ "$n" -ge 15 ]; then
+            kill "$dhclient_pid" >/dev/null 2>&1 || true
+            wait "$dhclient_pid" >/dev/null 2>&1 || true
+            return 1
+        fi
+        sleep 1
+    done
+
+    wait "$dhclient_pid" >/dev/null 2>&1 || true
+    wait_for_lte_ipv4
+}
+
+try_lte_static_ping() {
+    if ! wait_for_lte_interface; then
+        return 1
+    fi
+
+    log "Trying static test address 192.168.8.2/24 on $LTE_IFACE"
+    ifconfig "$LTE_IFACE" inet 192.168.8.2 netmask 255.255.255.0 alias >/dev/null 2>&1 ||
+        ifconfig "$LTE_IFACE" inet 192.168.8.2 netmask 255.255.255.0 >/dev/null 2>&1 ||
+        return 1
+
+    ping -c 1 -S 192.168.8.2 192.168.8.1 >/dev/null 2>&1
+}
+
+bring_lte_network_up() {
     lte_dev="$(find_lte_device || true)"
     if ! lte_interface_is_present; then
-        log "$LTE_IFACE is not present; skipping DHCP renewal"
+        log "$LTE_IFACE is not present; skipping network bring-up"
         return 1
     fi
 
     if [ -n "$lte_dev" ] && lte_usb_uses_ncm "$lte_dev"; then
-        send_huawei_serial_connect || true
-        sleep 2
+        send_huawei_ndis_connect "$lte_dev" || true
+        sleep 1
         lte_dev="$(find_lte_device || true)"
-        if [ -n "$lte_dev" ]; then
-            send_huawei_ndis_connect "$lte_dev" || true
-        else
-            log "Huawei USB device is not visible after serial init; will rediscover on next attempt"
+
+        if [ "$LTE_ENABLE_SERIAL_FALLBACK" != "0" ]; then
+            send_huawei_serial_connect || true
+            sleep 1
+            lte_dev="$(find_lte_device || true)"
+            if [ -n "$lte_dev" ]; then
+                send_huawei_ndis_connect "$lte_dev" || true
+            else
+                log "Huawei USB device is not visible after serial init; will rediscover on next attempt"
+            fi
         fi
-        sleep 3
+        sleep 1
     fi
 
     if ! wait_for_lte_interface; then
@@ -621,21 +669,19 @@ renew_lte_dhcp() {
     fi
 
     log "Requesting DHCP lease on $LTE_IFACE so ignore routers applies now"
-    pidfile="/var/run/dhclient/dhclient.$LTE_IFACE.pid"
-    if [ -f "$pidfile" ]; then
-        dhclient -r "$LTE_IFACE" >/dev/null 2>&1 || true
-    fi
-    if ! dhclient "$LTE_IFACE"; then
-        log "dhclient failed on $LTE_IFACE"
-        return 1
+    if run_dhclient_once; then
+        log "$LTE_IFACE received an IPv4 DHCP lease"
+        return 0
     fi
 
-    if ! wait_for_lte_ipv4; then
-        log "$LTE_IFACE did not get an IPv4 DHCP lease"
-        return 1
+    log "$LTE_IFACE did not get an IPv4 DHCP lease"
+    if try_lte_static_ping; then
+        log "Static 192.168.8.2/24 ping to 192.168.8.1 succeeded"
+        return 0
     fi
 
-    return 0
+    log "Static 192.168.8.2/24 ping to 192.168.8.1 failed"
+    return 1
 }
 
 attempt_lte_setup() {
@@ -651,7 +697,7 @@ attempt_lte_setup() {
 
         configure_freebsd_networking
 
-        if renew_lte_dhcp; then
+        if bring_lte_network_up; then
             return 0
         fi
 
