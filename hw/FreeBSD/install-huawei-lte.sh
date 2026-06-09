@@ -2,10 +2,12 @@
 set -eu
 
 USB_DEVICE_NAME="huaweimobile"
-LTE_IFACE="ue0"
+LTE_IFACE="${LTE_IFACE:-ue0}"
 LTE_APN="${LTE_APN:-}"
 LTE_AT_PORT="${LTE_AT_PORT:-}"
+LTE_MAX_ATTEMPTS="${LTE_MAX_ATTEMPTS:-3}"
 DHCPCONF="/etc/dhclient.conf"
+NETWORKING_CONFIGURED_IFACE=""
 
 log() {
     printf '%s\n' "$*"
@@ -36,7 +38,29 @@ ensure_usb_modeswitch_package() {
     pkg install -y usb_modeswitch
 }
 
-dhclient_has_ignore_routers() {
+dhclient_has_ignore_routers_for_iface() {
+    iface="$1"
+
+    [ -f "$DHCPCONF" ] || return 1
+
+    awk -v iface="$iface" '
+        {
+            sub(/#.*/, "")
+        }
+        $0 ~ "^[[:space:]]*interface[[:space:]]+\"" iface "\"[[:space:]]*\\{" {
+            in_block = 1
+        }
+        in_block && /(^|[[:space:]])ignore[[:space:]]+routers[[:space:]]*;/ {
+            found = 1
+        }
+        in_block && /\}/ {
+            in_block = 0
+        }
+        END { exit(found ? 0 : 1) }
+    ' "$DHCPCONF"
+}
+
+dhclient_has_any_ignore_routers() {
     [ -f "$DHCPCONF" ] || return 1
 
     awk '
@@ -51,21 +75,27 @@ dhclient_has_ignore_routers() {
 }
 
 ensure_dhclient_ignores_routers() {
+    iface="$1"
+
     if [ ! -f "$DHCPCONF" ]; then
         log "Creating $DHCPCONF"
         : > "$DHCPCONF"
     fi
 
-    if dhclient_has_ignore_routers; then
-        log "$DHCPCONF already contains an ignore routers setting"
+    if dhclient_has_ignore_routers_for_iface "$iface"; then
+        log "$DHCPCONF already contains ignore routers for $iface"
         return
     fi
 
-    log "Adding DHCP router suppression for $LTE_IFACE to $DHCPCONF"
+    if dhclient_has_any_ignore_routers; then
+        log "$DHCPCONF contains ignore routers, but not yet for $iface"
+    fi
+
+    log "Adding DHCP router suppression for $iface to $DHCPCONF"
     cat >> "$DHCPCONF" <<EOF
 
 # Added by install-huawei-lte.sh for the Huawei LTE HiLink interface.
-interface "$LTE_IFACE" {
+interface "$iface" {
     ignore routers;
 }
 EOF
@@ -147,8 +177,33 @@ find_lte_device() {
         find_lte_device_from_descriptors
 }
 
+list_lte_interfaces() {
+    ifconfig -l 2>/dev/null |
+        tr ' ' '\n' |
+        awk '/^ue[0-9][0-9]*$/ { print }'
+}
+
+choose_lte_interface() {
+    iface=""
+
+    if [ -n "$LTE_IFACE" ] && ifconfig "$LTE_IFACE" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    iface="$(list_lte_interfaces | sed -n '1p')"
+    if [ -n "$iface" ]; then
+        if [ "$LTE_IFACE" != "$iface" ]; then
+            log "Using discovered LTE interface $iface"
+        fi
+        LTE_IFACE="$iface"
+        return 0
+    fi
+
+    return 1
+}
+
 lte_interface_is_present() {
-    ifconfig "$LTE_IFACE" >/dev/null 2>&1
+    choose_lte_interface >/dev/null 2>&1
 }
 
 lte_interface_status() {
@@ -310,6 +365,20 @@ find_lte_serial_ports() {
         emitted="$emitted$port "
         printf '%s\n' "$port"
     done
+}
+
+log_lte_snapshot() {
+    usb_devices="$(usbconfig | awk -v name="$USB_DEVICE_NAME" 'tolower($0) ~ name { printf "%s%s", sep, $1; sep = " " }')"
+    interfaces="$(list_lte_interfaces | awk '{ printf "%s%s", sep, $1; sep = " " }')"
+    ports="$(find_lte_serial_ports | awk '{ printf "%s%s", sep, $1; sep = " " }')"
+
+    [ -n "$usb_devices" ] || usb_devices="none"
+    [ -n "$interfaces" ] || interfaces="none"
+    [ -n "$ports" ] || ports="none"
+
+    log "Visible Huawei USB devices: $usb_devices"
+    log "Visible USB ethernet interfaces: $interfaces"
+    log "Visible USB modem command ports: $ports"
 }
 
 build_huawei_ndis_command() {
@@ -496,9 +565,18 @@ switch_huawei_lte_device() {
 
 configure_freebsd_networking() {
     log "Persisting LTE mode-switch and DHCP interface settings"
+    choose_lte_interface || log "No ue* interface is visible yet; configuring expected interface $LTE_IFACE"
+    ensure_dhclient_ignores_routers "$LTE_IFACE"
     sysrc usb_modeswitch_enable=YES
     sysrc ifconfig_"$LTE_IFACE"="DHCP"
+
+    if [ "$NETWORKING_CONFIGURED_IFACE" = "$LTE_IFACE" ]; then
+        log "devd has already been restarted for $LTE_IFACE in this run"
+        return
+    fi
+
     service devd restart
+    NETWORKING_CONFIGURED_IFACE="$LTE_IFACE"
 }
 
 renew_lte_dhcp() {
@@ -529,11 +607,39 @@ renew_lte_dhcp() {
     dhclient "$LTE_IFACE"
 
     if ! wait_for_lte_ipv4; then
-        log "$LTE_IFACE has carrier but did not get an IPv4 DHCP lease"
+        log "$LTE_IFACE did not get an IPv4 DHCP lease"
         return 1
     fi
 
     return 0
+}
+
+attempt_lte_setup() {
+    attempt=1
+
+    while [ "$attempt" -le "$LTE_MAX_ATTEMPTS" ]; do
+        log "LTE discovery attempt $attempt of $LTE_MAX_ATTEMPTS"
+        log_lte_snapshot
+
+        if ! switch_huawei_lte_device; then
+            log "Mode/session preparation did not complete on attempt $attempt"
+        fi
+
+        configure_freebsd_networking
+
+        if renew_lte_dhcp; then
+            return 0
+        fi
+
+        log "LTE attempt $attempt did not produce a usable DHCP lease"
+        attempt=$((attempt + 1))
+        if [ "$attempt" -le "$LTE_MAX_ATTEMPTS" ]; then
+            log "Rediscovering after USB/modem state settles"
+            sleep 3
+        fi
+    done
+
+    return 1
 }
 
 main() {
@@ -546,20 +652,15 @@ main() {
     require_command od
     require_command stty
 
-    ensure_dhclient_ignores_routers
     ensure_usb_modeswitch_package
 
-    if switch_huawei_lte_device; then
-        configure_freebsd_networking
-        if ! renew_lte_dhcp; then
-            die "$LTE_IFACE is not ready after configuration"
-        fi
+    if attempt_lte_setup; then
         log "Huawei LTE setup complete"
         log "Check with: ifconfig $LTE_IFACE; netstat -rn"
         return 0
     fi
 
-    die "mode switch was not confirmed; leaving sysrc/devd networking changes unapplied"
+    die "$LTE_IFACE is not ready after $LTE_MAX_ATTEMPTS discovery attempts"
 }
 
 main "$@"
