@@ -238,6 +238,17 @@ lte_interface_has_ipv4() {
         awk '$1 == "inet" { found = 1 } END { exit(found ? 0 : 1) }'
 }
 
+lte_interface_has_dhcp_ipv4() {
+    ifconfig "$LTE_IFACE" 2>/dev/null |
+        awk '$1 == "inet" && $2 != "192.168.8.2" { found = 1 } END { exit(found ? 0 : 1) }'
+}
+
+clear_lte_static_test_address() {
+    if lte_interface_is_present; then
+        ifconfig "$LTE_IFACE" inet 192.168.8.2 -alias >/dev/null 2>&1 || true
+    fi
+}
+
 lte_usb_uses_ncm() {
     dev="$1"
 
@@ -397,6 +408,54 @@ write_at_port() {
     { printf '%s\r\n' "$command" > "$port"; } 2>/dev/null
 }
 
+query_at_port() {
+    port="$1"
+    command="$2"
+
+    if ! { exec 3<> "$port"; } 2>/dev/null; then
+        return 1
+    fi
+
+    printf '%s\r\n' "$command" >&3 || {
+        exec 3<&-
+        exec 3>&-
+        return 1
+    }
+
+    response="$(timeout 2 dd bs=1 count=512 <&3 2>/dev/null | tr '\r' '\n' | awk 'NF { print }')"
+    exec 3<&-
+    exec 3>&-
+
+    if [ -n "$response" ]; then
+        log "$port $command -> $(printf '%s' "$response" | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g')"
+        return 0
+    fi
+
+    log "$port $command -> no response"
+    return 1
+}
+
+log_huawei_at_status() {
+    ports="$(find_lte_serial_ports)"
+    [ -n "$ports" ] || return 1
+
+    for port in $ports; do
+        log "Probing AT status on $port"
+        stty -f "$port" 115200 cs8 -parenb -cstopb -echo >/dev/null 2>&1 || true
+        query_at_port "$port" "AT" || continue
+        query_at_port "$port" "ATI" || true
+        query_at_port "$port" "AT^SETPORT?" || true
+        query_at_port "$port" "AT+CGDCONT?" || true
+        query_at_port "$port" "AT+CGATT?" || true
+        query_at_port "$port" "AT+CREG?" || true
+        query_at_port "$port" "AT+CEREG?" || true
+        query_at_port "$port" "AT^NDISSTATQRY?" || true
+        return 0
+    done
+
+    return 1
+}
+
 send_huawei_serial_connect() {
     ports="$(find_lte_serial_ports)"
     if [ -z "$ports" ]; then
@@ -418,11 +477,10 @@ send_huawei_serial_connect() {
         log "Trying serial AT init on $port"
         stty -f "$port" 115200 cs8 -parenb -cstopb -echo >/dev/null 2>&1 || true
 
-        if ! write_at_port "$port" "AT"; then
+        if ! query_at_port "$port" "AT"; then
             log "Could not write AT probe to $port"
             continue
         fi
-        sleep 1
 
         write_at_port "$port" "ATZ" || true
         sleep 1
@@ -588,6 +646,8 @@ configure_freebsd_networking() {
 }
 
 run_dhclient_once() {
+    clear_lte_static_test_address
+
     pidfile="/var/run/dhclient/dhclient.$LTE_IFACE.pid"
     if [ -f "$pidfile" ]; then
         dhclient -r "$LTE_IFACE" >/dev/null 2>&1 || true
@@ -597,7 +657,7 @@ run_dhclient_once() {
     dhclient_pid="$!"
     n=0
     while kill -0 "$dhclient_pid" >/dev/null 2>&1; do
-        if lte_interface_has_ipv4; then
+        if lte_interface_has_dhcp_ipv4; then
             wait "$dhclient_pid" >/dev/null 2>&1 || true
             return 0
         fi
@@ -612,7 +672,15 @@ run_dhclient_once() {
     done
 
     wait "$dhclient_pid" >/dev/null 2>&1 || true
-    wait_for_lte_ipv4
+    n=0
+    while [ "$n" -lt 5 ]; do
+        if lte_interface_has_dhcp_ipv4; then
+            return 0
+        fi
+        n=$((n + 1))
+        sleep 1
+    done
+    return 1
 }
 
 try_lte_static_ping() {
@@ -621,6 +689,7 @@ try_lte_static_ping() {
     fi
 
     log "Trying static test address 192.168.8.2/24 on $LTE_IFACE"
+    clear_lte_static_test_address
     ifconfig "$LTE_IFACE" inet 192.168.8.2 netmask 255.255.255.0 alias >/dev/null 2>&1 ||
         ifconfig "$LTE_IFACE" inet 192.168.8.2 netmask 255.255.255.0 >/dev/null 2>&1 ||
         return 1
@@ -641,6 +710,7 @@ bring_lte_network_up() {
         lte_dev="$(find_lte_device || true)"
 
         if [ "$LTE_ENABLE_SERIAL_FALLBACK" != "0" ]; then
+            log_huawei_at_status || true
             send_huawei_serial_connect || true
             sleep 1
             lte_dev="$(find_lte_device || true)"
@@ -721,6 +791,7 @@ main() {
     require_command service
     require_command od
     require_command stty
+    require_command timeout
 
     ensure_usb_modeswitch_package
 
