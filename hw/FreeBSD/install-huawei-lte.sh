@@ -326,6 +326,7 @@ send_huawei_ndis_connect() {
     byte_count="$(printf '%s\n' "$encoded" | sed -n '2p')"
     ncm_iface="$(get_ncm_control_interface "$lte_dev" || true)"
     tried=" "
+    accepted=0
 
     ifconfig "$LTE_IFACE" up 2>/dev/null || true
 
@@ -339,6 +340,7 @@ send_huawei_ndis_connect() {
         # shellcheck disable=SC2086
         if usbconfig -d "$lte_dev" -i 0 do_request 0x21 0 0 "$request_index" "$byte_count" $byte_args >/dev/null 2>&1; then
             log "NDIS connect request accepted on USB interface index $request_index"
+            accepted=1
             if wait_for_lte_carrier; then
                 log "$LTE_IFACE got carrier after NDIS connect on USB interface index $request_index"
                 return 0
@@ -347,7 +349,12 @@ send_huawei_ndis_connect() {
         fi
     done
 
-    log "NDIS connect did not bring $LTE_IFACE carrier up"
+    if [ "$accepted" -eq 1 ]; then
+        log "NDIS connect was accepted but $LTE_IFACE did not report carrier"
+        return 0
+    fi
+
+    log "NDIS connect control request was not accepted"
     return 1
 }
 
@@ -428,12 +435,11 @@ renew_lte_dhcp() {
         sleep 3
     fi
 
-    log "Bringing $LTE_IFACE up and waiting for carrier"
+    log "Bringing $LTE_IFACE up"
     ifconfig "$LTE_IFACE" up
 
-    if ! wait_for_lte_carrier; then
-        log "$LTE_IFACE is present but did not get carrier; current status: $(lte_interface_status)"
-        return 1
+    if ! lte_interface_has_carrier; then
+        log "$LTE_IFACE status is $(lte_interface_status); trying DHCP anyway"
     fi
 
     log "Requesting DHCP lease on $LTE_IFACE so ignore routers applies now"
