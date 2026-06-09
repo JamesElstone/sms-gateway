@@ -3,6 +3,7 @@ set -eu
 
 USB_DEVICE_NAME="huaweimobile"
 LTE_IFACE="ue0"
+LTE_APN="${LTE_APN:-}"
 DHCPCONF="/etc/dhclient.conf"
 
 log() {
@@ -188,6 +189,23 @@ lte_usb_uses_ncm() {
         grep -Eq 'ncm|network control model'
 }
 
+get_ncm_control_interface() {
+    dev="$1"
+
+    get_usb_config_desc "$dev" |
+        awk '
+            /^[[:space:]]*Interface [0-9][0-9]*$/ {
+                iface = $2
+            }
+            /NCM Network Control Model/ && iface != "" {
+                print iface
+                found = 1
+                exit
+            }
+            END { exit(found ? 0 : 1) }
+        '
+}
+
 detect_lte_usb_mode() {
     dev="$1"
 
@@ -274,6 +292,59 @@ wait_for_lte_ipv4() {
     return 1
 }
 
+at_command_to_usb_bytes() {
+    command="$1"
+
+    printf '%s\r\n' "$command" |
+        od -An -tx1 -v |
+        awk '
+            {
+                for (i = 1; i <= NF; i++) {
+                    printf " 0x%s", $i
+                    count++
+                }
+            }
+            END {
+                printf "\n%d\n", count
+            }
+        '
+}
+
+send_huawei_ndis_connect() {
+    lte_dev="$1"
+
+    if [ -n "$LTE_APN" ]; then
+        ndis_command="AT^NDISDUP=1,1,\"$LTE_APN\""
+        log "Sending Huawei NDIS connect command using APN from LTE_APN"
+    else
+        ndis_command="AT^NDISDUP=1,1"
+        log "Sending Huawei NDIS connect command without explicit APN"
+    fi
+
+    encoded="$(at_command_to_usb_bytes "$ndis_command")"
+    byte_args="$(printf '%s\n' "$encoded" | sed -n '1p')"
+    byte_count="$(printf '%s\n' "$encoded" | sed -n '2p')"
+    ncm_iface="$(get_ncm_control_interface "$lte_dev" || true)"
+    tried=" "
+
+    for request_index in $ncm_iface 2 3 0; do
+        case "$tried" in
+            *" $request_index "*) continue ;;
+        esac
+        tried="$tried$request_index "
+
+        log "Trying NDIS connect control request on USB interface index $request_index"
+        # shellcheck disable=SC2086
+        if usbconfig -d "$lte_dev" -i 0 do_request 0x21 0 0 "$request_index" "$byte_count" $byte_args >/dev/null 2>&1; then
+            log "NDIS connect request accepted on USB interface index $request_index"
+            return 0
+        fi
+    done
+
+    log "NDIS connect control request was not accepted"
+    return 1
+}
+
 switch_huawei_lte_device() {
     lte_dev="$(find_lte_device || true)"
     if [ -n "$lte_dev" ]; then
@@ -336,9 +407,15 @@ configure_freebsd_networking() {
 }
 
 renew_lte_dhcp() {
+    lte_dev="$(find_lte_device || true)"
     if ! lte_interface_is_present; then
         log "$LTE_IFACE is not present; skipping DHCP renewal"
         return 1
+    fi
+
+    if [ -n "$lte_dev" ] && lte_usb_uses_ncm "$lte_dev"; then
+        send_huawei_ndis_connect "$lte_dev" || true
+        sleep 3
     fi
 
     log "Bringing $LTE_IFACE up and waiting for carrier"
@@ -371,6 +448,7 @@ main() {
     require_command ifconfig
     require_command sysrc
     require_command service
+    require_command od
 
     ensure_dhclient_ignores_routers
     ensure_usb_modeswitch_package
