@@ -180,10 +180,27 @@ lte_interface_has_ipv4() {
         awk '$1 == "inet" { found = 1 } END { exit(found ? 0 : 1) }'
 }
 
+lte_usb_uses_ncm() {
+    dev="$1"
+
+    get_usb_config_desc "$dev" |
+        tr '[:upper:]' '[:lower:]' |
+        grep -Eq 'ncm|network control model'
+}
+
 detect_lte_usb_mode() {
     dev="$1"
 
     if lte_interface_is_present; then
+        if lte_usb_uses_ncm "$dev"; then
+            if lte_interface_has_carrier; then
+                printf '%s\n' "ncm-active"
+            else
+                printf '%s\n' "ncm-no-carrier"
+            fi
+            return
+        fi
+
         if lte_interface_has_carrier; then
             printf '%s\n' "ethernet-active"
         else
@@ -203,6 +220,11 @@ detect_lte_usb_mode() {
     fi
 
     if printf '%s\n' "$config_desc" | grep -Eq 'communications|cdc|network|ethernet'; then
+        if printf '%s\n' "$config_desc" | grep -Eq 'ncm|network control model'; then
+            printf '%s\n' "ncm"
+            return
+        fi
+
         printf '%s\n' "interface"
         return
     fi
@@ -265,18 +287,17 @@ switch_huawei_lte_device() {
 
     lte_mode="$(detect_lte_usb_mode "$lte_dev")"
     log "Current LTE USB mode appears to be: $lte_mode"
-    if [ "$lte_mode" = "ethernet-active" ]; then
+    if [ "$lte_mode" = "ethernet-active" ] || [ "$lte_mode" = "ncm-active" ]; then
         log "$LTE_IFACE is already active; dongle is in network mode"
         return 0
     fi
 
-    if [ "$lte_mode" = "ethernet-no-carrier" ]; then
+    if [ "$lte_mode" = "ethernet-no-carrier" ] || [ "$lte_mode" = "ncm-no-carrier" ]; then
         log "$LTE_IFACE already exists but has status: $(lte_interface_status)"
-        log "Leaving USB mode alone; DHCP renewal will validate carrier"
-        return 0
+        log "Will try the Huawei mode-switch command again before DHCP"
     fi
 
-    if [ "$lte_mode" = "interface" ]; then
+    if [ "$lte_mode" = "interface" ] || [ "$lte_mode" = "ncm" ]; then
         log "USB device already exposes a network-style interface; waiting for $LTE_IFACE"
         if wait_for_lte_interface; then
             log "$LTE_IFACE is present; dongle is in network mode"
@@ -297,6 +318,7 @@ switch_huawei_lte_device() {
         log "usb_modeswitch exited non-zero; checking whether the device re-enumerated anyway"
     fi
 
+    sleep 3
     if wait_for_lte_interface; then
         log "$LTE_IFACE appeared after mode switch"
         return 0
@@ -319,17 +341,20 @@ renew_lte_dhcp() {
         return 1
     fi
 
-    log "Renewing DHCP on $LTE_IFACE so ignore routers applies now"
-    if ! service netif restart "$LTE_IFACE"; then
-        log "service netif restart failed for $LTE_IFACE; trying dhclient directly"
-        dhclient -r "$LTE_IFACE" >/dev/null 2>&1 || true
-        dhclient "$LTE_IFACE"
-    fi
+    log "Bringing $LTE_IFACE up and waiting for carrier"
+    ifconfig "$LTE_IFACE" up
 
     if ! wait_for_lte_carrier; then
         log "$LTE_IFACE is present but did not get carrier; current status: $(lte_interface_status)"
         return 1
     fi
+
+    log "Requesting DHCP lease on $LTE_IFACE so ignore routers applies now"
+    pidfile="/var/run/dhclient/dhclient.$LTE_IFACE.pid"
+    if [ -f "$pidfile" ]; then
+        dhclient -r "$LTE_IFACE" >/dev/null 2>&1 || true
+    fi
+    dhclient "$LTE_IFACE"
 
     if ! wait_for_lte_ipv4; then
         log "$LTE_IFACE has carrier but did not get an IPv4 DHCP lease"
