@@ -13,6 +13,8 @@ LTE_NDIS_INDEXES="${LTE_NDIS_INDEXES:-2 1 3 0}"
 LTE_NDIS_DISCONNECT_FIRST="${LTE_NDIS_DISCONNECT_FIRST:-1}"
 LTE_REGISTRATION_WAIT="${LTE_REGISTRATION_WAIT:-30}"
 LTE_APN_CANDIDATES="${LTE_APN_CANDIDATES:-internet}"
+LTE_OPERATOR_SCAN="${LTE_OPERATOR_SCAN:-1}"
+LTE_OPERATOR_SCAN_TIMEOUT="${LTE_OPERATOR_SCAN_TIMEOUT:-70}"
 DHCPCONF="/etc/dhclient.conf"
 NETWORKING_CONFIGURED_IFACE=""
 
@@ -419,8 +421,10 @@ write_at_port() {
 at_port_response() {
     port="$1"
     command="$2"
+    read_timeout="${3:-$LTE_AT_READ_TIMEOUT}"
+    open_timeout=$((read_timeout + 3))
 
-    timeout 4 sh -c '
+    timeout "$open_timeout" sh -c '
             port="$1"
             command="$2"
             read_timeout="$3"
@@ -428,7 +432,7 @@ at_port_response() {
             timeout "$read_timeout" dd bs=1 count=1024 <&3 >/dev/null 2>&1 || true
             printf "%s\r\n" "$command" >&3 || exit 1
             timeout "$read_timeout" dd bs=1 count=1024 <&3 2>/dev/null
-        ' at-query "$port" "$command" "$LTE_AT_READ_TIMEOUT" |
+        ' at-query "$port" "$command" "$read_timeout" |
         tr '\r' '\n' |
         awk 'NF { print }'
 }
@@ -459,6 +463,22 @@ query_at_port() {
     fi
 
     log "$port $command -> no response"
+    return 1
+}
+
+query_at_port_with_timeout() {
+    port="$1"
+    command="$2"
+    read_timeout="$3"
+
+    response="$(at_port_response "$port" "$command" "$read_timeout")"
+    log_at_response "$port" "$command" "$response"
+
+    if [ -n "$response" ]; then
+        printf '%s\n' "$response" | response_has_ok
+        return "$?"
+    fi
+
     return 1
 }
 
@@ -527,7 +547,10 @@ log_huawei_at_status() {
         stty -f "$port" 115200 cs8 -parenb -cstopb -echo >/dev/null 2>&1 || true
         query_at_port "$port" "AT" || continue
         write_at_port "$port" "ATE0" || true
+        query_at_port "$port" "AT+CMEE=2" || true
         query_at_port "$port" "AT+CPIN?" || true
+        query_at_port "$port" "AT^SIMST?" || true
+        query_at_port "$port" "AT^CARDLOCK?" || true
         query_at_port "$port" "AT+CFUN?" || true
         query_at_port "$port" "AT+CSQ" || true
         query_at_port "$port" "AT^HCSQ?" || true
@@ -537,6 +560,11 @@ log_huawei_at_status() {
         query_at_port "$port" "AT+CGREG?" || true
         query_at_port "$port" "AT+CEREG?" || true
         query_at_port "$port" "AT+COPS?" || true
+        query_at_port "$port" "AT^SYSCFG?" || true
+        query_at_port "$port" "AT^SYSCFGEX?" || true
+        if [ "$LTE_OPERATOR_SCAN" != "0" ]; then
+            query_at_port_with_timeout "$port" "AT+COPS=?" "$LTE_OPERATOR_SCAN_TIMEOUT" || true
+        fi
         query_at_port "$port" "AT^SYSINFOEX" || true
         query_at_port "$port" "AT^NDISSTATQRY?" || true
         return 0
