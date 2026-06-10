@@ -61,7 +61,7 @@ Usage:
 Targets:
   hilink   Switch storage-mode Huawei dongles to HiLink 14db/14dc and test ue0.
            This is the default.
-  storage  Disable automatic usb_modeswitch and preserve/catch 12d1:1f01 storage mode.
+  storage  Disable automatic usb_modeswitch and switch/catch 12d1:1f01 storage mode.
   ncm      Use the older NCM/serial attach path for 12d1:155e.
 
 Common options:
@@ -1430,7 +1430,7 @@ wait_for_huawei_storage_after_usb_change() {
 }
 
 disable_usb_modeswitch_autoswitch() {
-    log "Disabling automatic usb_modeswitch so storage mode is not immediately consumed"
+    log "Disabling automatic usb_modeswitch so the dongle can switch to storage mode on replug"
     sysrc usb_modeswitch_enable=NO
     service devd restart
 }
@@ -1506,7 +1506,9 @@ prepare_huawei_storage_mode_from_ncm() {
         log "Huawei device did not reappear after storage-mode preparation"
     fi
 
-    log "Host is prepared to preserve storage mode; physically unplug/replug the dongle, then rerun"
+    log "Host is prepared to switch the dongle to storage mode on the next physical attach"
+    log "Physically unplug/replug the dongle, then run: ./install-huawei-lte.sh --status"
+    log "Run ./install-huawei-lte.sh --target storage after replug if you want the storage target to complete successfully"
     return 1
 }
 
@@ -1878,7 +1880,9 @@ attempt_storage_setup() {
 
     if usb_product_is_hilink "$mode_product"; then
         log "Huawei dongle is in HiLink mode (${mode_vendor}:${mode_product})"
-        log "Host is prepared to preserve storage mode; physically unplug/replug the dongle, then rerun"
+        log "Host is prepared to switch the dongle to storage mode on the next physical attach"
+        log "Physically unplug/replug the dongle, then run: ./install-huawei-lte.sh --status"
+        log "Run ./install-huawei-lte.sh --target storage after replug if you want the storage target to complete successfully"
         return 1
     fi
 
