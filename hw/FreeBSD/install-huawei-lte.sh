@@ -39,14 +39,19 @@ PDP_CONTEXT_DONE=0
 RADIO_PROFILE_DONE=0
 STATUS_ONLY=0
 
+log_file() {
+    timestamp="$(date '+[%d/%m/%Y %H:%M]' 2>/dev/null || printf '[unknown time]')"
+    printf '%s %s\n' "$timestamp" "$*" 2>/dev/null >> "$LTE_LOG_FILE" || true
+}
+
 log() {
     printf '%s\n' "$*"
-    printf '%s\n' "$*" 2>/dev/null >> "$LTE_LOG_FILE" || true
+    log_file "$*"
 }
 
 die() {
     printf 'ERROR: %s\n' "$*" >&2
-    printf 'ERROR: %s\n' "$*" 2>/dev/null >> "$LTE_LOG_FILE" || true
+    log_file "ERROR: $*"
     exit 1
 }
 
