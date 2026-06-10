@@ -1,2 +1,3 @@
 hw/FreeBSD/*.sh text eol=lf
+hw/FreeBSD/*.md text eol=lf
 hw/FreeBSD/rc.d/* text eol=lf
