@@ -27,6 +27,7 @@ LTE_STORAGE_AT_RECOVERY="${LTE_STORAGE_AT_RECOVERY:-1}"
 LTE_STORAGE_SETPORT_VALUE="${LTE_STORAGE_SETPORT_VALUE:-A1,A2;10,12,13,16}"
 LTE_STORAGE_U2DIAG_VALUE="${LTE_STORAGE_U2DIAG_VALUE:-255}"
 LTE_LOG_FILE="${LTE_LOG_FILE:-/tmp/install-huawei-lte.log}"
+USB_MODESWITCH_CONF="${USB_MODESWITCH_CONF:-/usr/local/etc/usb_modeswitch.conf}"
 HUAWEI_VENDOR_ID="0x12d1"
 HUAWEI_STORAGE_PRODUCT_ID="0x1f01"
 HUAWEI_NCM_PRODUCT_ID="0x155e"
@@ -67,6 +68,7 @@ Targets:
   hilink   Switch storage-mode Huawei dongles to HiLink 14db/14dc and test ue0.
            This is the default.
   storage  Disable automatic usb_modeswitch and switch/catch 12d1:1f01 storage mode.
+           If the dongle is already switched, reboot or reattach after running this.
   ncm      Use the older NCM/serial attach path for 12d1:155e.
 
 Common options:
@@ -1323,6 +1325,74 @@ lte_iface_brief_status() {
     fi
 }
 
+read_usb_modeswitch_disable_switching() {
+    if [ ! -f "$USB_MODESWITCH_CONF" ]; then
+        printf '%s\n' "missing"
+        return
+    fi
+
+    value="$(
+        awk -F= '
+            /^[[:space:]]*DisableSwitching[[:space:]]*=/ {
+                value = $2
+                gsub(/[[:space:]]/, "", value)
+                found = 1
+            }
+            END {
+                if (found) {
+                    print value
+                }
+            }
+        ' "$USB_MODESWITCH_CONF"
+    )"
+
+    [ -n "$value" ] || value="unset"
+    printf '%s\n' "$value"
+}
+
+set_usb_modeswitch_disable_switching() {
+    value="$1"
+
+    if [ ! -f "$USB_MODESWITCH_CONF" ]; then
+        log "Creating $USB_MODESWITCH_CONF"
+        : > "$USB_MODESWITCH_CONF"
+    fi
+
+    current_value="$(read_usb_modeswitch_disable_switching)"
+    if [ "$current_value" = "$value" ]; then
+        log "$USB_MODESWITCH_CONF already has DisableSwitching=$value"
+        return 0
+    fi
+
+    tmp_file="${TMPDIR:-/tmp}/install-huawei-lte.usb_modeswitch.$$"
+    if ! awk -v value="$value" '
+        BEGIN { replaced = 0 }
+        /^[[:space:]]*DisableSwitching[[:space:]]*=/ && replaced == 0 {
+            print "DisableSwitching=" value
+            replaced = 1
+            next
+        }
+        { print }
+        END {
+            if (replaced == 0) {
+                print ""
+                print "DisableSwitching=" value
+            }
+        }
+    ' "$USB_MODESWITCH_CONF" > "$tmp_file"; then
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    if ! cat "$tmp_file" > "$USB_MODESWITCH_CONF"; then
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    rm -f "$tmp_file"
+    log "Set $USB_MODESWITCH_CONF DisableSwitching=$value"
+}
+
 report_status() {
     lte_dev="$(find_lte_device || true)"
 
@@ -1357,6 +1427,7 @@ report_status() {
     usb_modeswitch_value="$(run_sysrc_read -n usb_modeswitch_enable 2>/dev/null || true)"
     [ -n "$usb_modeswitch_value" ] || usb_modeswitch_value="unknown"
     printf 'usb_modeswitch_enable = %s\n' "$usb_modeswitch_value"
+    printf 'usb_modeswitch_disable_switching = %s\n' "$(read_usb_modeswitch_disable_switching)"
 }
 
 read_huawei_usb_ids() {
@@ -1435,13 +1506,15 @@ wait_for_huawei_storage_after_usb_change() {
 }
 
 disable_usb_modeswitch_autoswitch() {
-    log "Disabling automatic usb_modeswitch so the dongle can switch to storage mode on replug"
-    sysrc usb_modeswitch_enable=NO
+    log "Setting usb_modeswitch DisableSwitching=1 so the dongle stays in storage mode on attach"
+    set_usb_modeswitch_disable_switching 1
+    sysrc usb_modeswitch_enable=YES
     service devd restart
 }
 
 enable_usb_modeswitch_autoswitch() {
-    log "Enabling automatic usb_modeswitch for HiLink recovery"
+    log "Setting usb_modeswitch DisableSwitching=0 so the dongle can switch to HiLink mode"
+    set_usb_modeswitch_disable_switching 0
     sysrc usb_modeswitch_enable=YES
     service devd restart
 }
@@ -1497,7 +1570,7 @@ try_huawei_storage_at_recovery() {
 
 log_storage_replug_instructions() {
     log "Host is prepared to switch the dongle to storage mode on the next physical attach"
-    log "Physically unplug/replug the dongle, then run: ./install-huawei-lte.sh --status"
+    log "Reboot hydrogen or physically unplug/replug the dongle, then run: ./install-huawei-lte.sh --status"
     log "Storage mode is confirmed when --status shows id = 12d1:1f01"
 }
 
@@ -1539,6 +1612,9 @@ run_hilink_modeswitch_from_storage() {
         log "Missing usb_modeswitch config: $HUAWEI_HILINK_MODESWITCH_CONFIG"
         return 1
     fi
+
+    set_usb_modeswitch_disable_switching 0
+    sysrc usb_modeswitch_enable=YES
 
     if ! /usr/local/sbin/usb_modeswitch -v 0x12d1 -p 0x1f01 -c /usr/local/share/usb_modeswitch/12d1:1f01; then
         log "usb_modeswitch exited non-zero while switching from storage mode"
