@@ -80,7 +80,7 @@ sms_gateway_start()
 	fi
 
 	echo "Starting ${name}: ${sms_gateway_device_type} target ${sms_gateway_target}."
-	"$script" --target "$sms_gateway_target"
+	"$script" --service --target "$sms_gateway_target"
 }
 
 sms_gateway_status()

@@ -44,6 +44,7 @@ PDP_CONTEXT_DONE=0
 RADIO_PROFILE_DONE=0
 STATUS_ONLY=0
 STORAGE_REBOOT_REQUIRED=0
+SERVICE_RUN=0
 
 log_file() {
     timestamp="$(date '+[%d/%m/%Y %H:%M]' 2>/dev/null || printf '[unknown time]')"
@@ -79,6 +80,7 @@ Targets:
 Common options:
   -h, --help                       Show this help text.
       --status                     Show current Huawei USB/network state and exit.
+      --service                    Run from rc.d; suppress terminal-only final checks.
       --target MODE                Set target mode: storage, hilink, or ncm.
       --iface IFACE                USB ethernet interface name. Default: $LTE_IFACE.
       --max-attempts N             Discovery attempts. Default: $LTE_MAX_ATTEMPTS.
@@ -146,6 +148,10 @@ parse_args() {
                 ;;
             --status)
                 STATUS_ONLY=1
+                shift
+                ;;
+            --service)
+                SERVICE_RUN=1
                 shift
                 ;;
             --target)
@@ -1934,6 +1940,37 @@ bring_hilink_network_up() {
     return 1
 }
 
+terminal_final_checks_enabled() {
+    [ "$SERVICE_RUN" -eq 0 ] && [ -t 1 ]
+}
+
+run_terminal_command() {
+    printf '\n$'
+    for arg in "$@"; do
+        printf ' %s' "$arg"
+    done
+    printf '\n'
+
+    "$@" || true
+}
+
+finish_hilink_setup() {
+    log "Huawei HiLink setup complete"
+
+    if terminal_final_checks_enabled; then
+        log_file "Running terminal HiLink final checks"
+        printf '\nHiLink final checks:\n'
+        run_terminal_command ifconfig "$LTE_IFACE"
+        run_terminal_command ping -c 1 192.168.8.1
+        run_terminal_command netstat -rn
+        return 0
+    fi
+
+    if [ "$SERVICE_RUN" -eq 0 ]; then
+        log "Check with: ifconfig $LTE_IFACE; ping -c 1 192.168.8.1; netstat -rn"
+    fi
+}
+
 bring_lte_network_up() {
     lte_dev="$(find_lte_device || true)"
     if ! lte_interface_is_present; then
@@ -2142,8 +2179,7 @@ main() {
         hilink)
             if attempt_hilink_setup; then
                 persist_sms_gateway_target hilink
-                log "Huawei HiLink setup complete"
-                log "Check with: ifconfig $LTE_IFACE; ping -c 1 192.168.8.1; netstat -rn"
+                finish_hilink_setup
                 return 0
             fi
             die "Huawei HiLink mode is not ready after $LTE_MAX_ATTEMPTS discovery attempts"

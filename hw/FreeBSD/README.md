@@ -69,6 +69,10 @@ Switch/configure the dongle for HiLink mode:
 sudo ./install-huawei-lte.sh --target hilink
 ```
 
+When this is run from a terminal, the installer prints the final `ifconfig`,
+`ping -c 1 192.168.8.1`, and `netstat -rn` checks after a successful HiLink
+setup.
+
 Prepare the host so the dongle can remain in storage mode after a full host
 reboot:
 
@@ -136,7 +140,7 @@ For the default FreeBSD Huawei LTE setup, that resolves to:
 The rc.d service then runs:
 
 ```sh
-install-huawei-lte.sh --target "$sms_gateway_target"
+install-huawei-lte.sh --service --target "$sms_gateway_target"
 ```
 
 The default rc.d settings are:
