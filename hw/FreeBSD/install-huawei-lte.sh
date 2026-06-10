@@ -13,10 +13,13 @@ LTE_NDIS_INDEXES="${LTE_NDIS_INDEXES:-2 1 3 0}"
 LTE_NDIS_DISCONNECT_FIRST="${LTE_NDIS_DISCONNECT_FIRST:-1}"
 LTE_REGISTRATION_WAIT="${LTE_REGISTRATION_WAIT:-30}"
 LTE_APN_CANDIDATES="${LTE_APN_CANDIDATES:-internet}"
-LTE_OPERATOR_SCAN="${LTE_OPERATOR_SCAN:-1}"
+LTE_OPERATOR_SCAN="${LTE_OPERATOR_SCAN:-0}"
 LTE_OPERATOR_SCAN_TIMEOUT="${LTE_OPERATOR_SCAN_TIMEOUT:-70}"
+LTE_RADIO_RESET_FIRST="${LTE_RADIO_RESET_FIRST:-1}"
+LTE_POST_RADIO_RESET_WAIT="${LTE_POST_RADIO_RESET_WAIT:-20}"
 DHCPCONF="/etc/dhclient.conf"
 NETWORKING_CONFIGURED_IFACE=""
+RADIO_RESET_DONE=0
 
 log() {
     printf '%s\n' "$*"
@@ -573,6 +576,46 @@ log_huawei_at_status() {
     return 1
 }
 
+reset_huawei_radio_once() {
+    [ "$LTE_RADIO_RESET_FIRST" != "0" ] || return 0
+    [ "$RADIO_RESET_DONE" -eq 0 ] || return 0
+
+    ports="$(find_lte_serial_ports)"
+    if [ -z "$ports" ]; then
+        log "No /dev/cuaU* modem command ports found for radio reset"
+        return 1
+    fi
+
+    for port in $ports; do
+        log "Trying Huawei radio reset on $port"
+        stty -f "$port" 115200 cs8 -parenb -cstopb -echo >/dev/null 2>&1 || true
+
+        if ! query_at_port "$port" "AT"; then
+            log "Could not write AT probe to $port for radio reset"
+            continue
+        fi
+
+        query_at_port "$port" "AT+CMEE=2" || true
+        query_at_port "$port" "AT+CFUN=0" || true
+        sleep 3
+        query_at_port "$port" "AT+CFUN=1" || true
+        sleep 3
+        query_at_port "$port" "AT+COPS=0" || true
+        log "Waiting ${LTE_POST_RADIO_RESET_WAIT}s after radio reset"
+        sleep "$LTE_POST_RADIO_RESET_WAIT"
+
+        query_at_port "$port" "AT+CSQ" || true
+        query_at_port "$port" "AT^HCSQ?" || true
+        query_at_port "$port" "AT+CEREG?" || true
+        query_at_port "$port" "AT+CGATT?" || true
+
+        RADIO_RESET_DONE=1
+        return 0
+    done
+
+    return 1
+}
+
 send_huawei_serial_connect() {
     ports="$(find_lte_serial_ports)"
     if [ -z "$ports" ]; then
@@ -870,6 +913,7 @@ bring_lte_network_up() {
     fi
 
     if [ -n "$lte_dev" ] && lte_usb_uses_ncm "$lte_dev"; then
+        reset_huawei_radio_once || true
         send_huawei_ndis_connect "$lte_dev" || true
         sleep 1
         lte_dev="$(find_lte_device || true)"
