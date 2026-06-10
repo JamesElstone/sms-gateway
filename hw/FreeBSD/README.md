@@ -6,7 +6,7 @@ dongle.
 The main entry point is:
 
 ```sh
-/usr/local/freebsd-sms-gateway/hw/FreeBSD/install-huawei-lte.sh
+/usr/local/sms-gateway/hw/FreeBSD/install-huawei-lte.sh
 ```
 
 The boot-time wrapper is:
@@ -176,13 +176,13 @@ At boot, the rc.d service builds the installer path from the platform and device
 type:
 
 ```text
-/usr/local/freebsd-sms-gateway/hw/{uname}/install-{sms_gateway_device_type}.sh
+/usr/local/sms-gateway/hw/{uname}/install-{sms_gateway_device_type}.sh
 ```
 
 For the default FreeBSD Huawei LTE setup, that resolves to:
 
 ```sh
-/usr/local/freebsd-sms-gateway/hw/FreeBSD/install-huawei-lte.sh
+/usr/local/sms-gateway/hw/FreeBSD/install-huawei-lte.sh
 ```
 
 The rc.d service then runs:
@@ -197,7 +197,7 @@ If `lte_route_enable="YES"` is set in `/etc/rc.conf`, the service passes
 The default rc.d settings are:
 
 ```sh
-sms_gateway_root="/usr/local/freebsd-sms-gateway"
+sms_gateway_root="/usr/local/sms-gateway"
 sms_gateway_platform="$(uname -s)"
 sms_gateway_device_type="huawei-lte"
 sms_gateway_target="hilink"

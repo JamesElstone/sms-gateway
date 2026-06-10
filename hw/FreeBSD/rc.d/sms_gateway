@@ -21,7 +21,7 @@ rcvar="${name}_enable"
 load_rc_config "$name"
 
 : ${sms_gateway_enable:="NO"}
-: ${sms_gateway_root:="/usr/local/freebsd-sms-gateway"}
+: ${sms_gateway_root:="/usr/local/sms-gateway"}
 : ${sms_gateway_platform:="$(uname -s)"}
 : ${sms_gateway_device_type:="huawei-lte"}
 : ${sms_gateway_target:="hilink"}
