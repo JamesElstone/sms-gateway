@@ -2,6 +2,7 @@
 set -eu
 
 USB_DEVICE_NAME="huaweimobile"
+LTE_TARGET_MODE="${LTE_TARGET_MODE:-hilink}"
 LTE_IFACE="${LTE_IFACE:-ue0}"
 LTE_APN="${LTE_APN:-}"
 LTE_AT_PORT="${LTE_AT_PORT:-}"
@@ -23,6 +24,11 @@ LTE_SYSCFGEX_MODE="${LTE_SYSCFGEX_MODE:-03}"
 LTE_SYSCFGEX_BAND="${LTE_SYSCFGEX_BAND:-3FFFFFFF}"
 LTE_SYSCFGEX_LTE_BAND="${LTE_SYSCFGEX_LTE_BAND:-7FFFFFFFFFFFFFFF}"
 LTE_LOG_FILE="${LTE_LOG_FILE:-/tmp/install-huawei-lte.log}"
+HUAWEI_VENDOR_ID="0x12d1"
+HUAWEI_STORAGE_PRODUCT_ID="0x1f01"
+HUAWEI_NCM_PRODUCT_ID="0x155e"
+HUAWEI_HILINK_PRODUCT_IDS="0x14db 0x14dc"
+HUAWEI_HILINK_MODESWITCH_CONFIG="/usr/local/share/usb_modeswitch/12d1:1f01"
 DHCPCONF="/etc/dhclient.conf"
 NETWORKING_CONFIGURED_IFACE=""
 RADIO_RESET_DONE=0
@@ -194,9 +200,20 @@ find_lte_device_from_descriptors() {
         done
 }
 
+find_lte_device_from_vendor_id() {
+    list_usb_devices |
+        while IFS= read -r dev; do
+            if [ "$(get_usb_field "$dev" idVendor || true)" = "$HUAWEI_VENDOR_ID" ]; then
+                printf '%s\n' "$dev"
+                return 0
+            fi
+        done
+}
+
 find_lte_device() {
     find_lte_device_from_summary ||
-        find_lte_device_from_descriptors
+        find_lte_device_from_descriptors ||
+        find_lte_device_from_vendor_id
 }
 
 list_lte_interfaces() {
@@ -864,6 +881,149 @@ send_huawei_ndis_connect() {
     return 1
 }
 
+usb_product_is_hilink() {
+    product="$1"
+
+    for hilink_product in $HUAWEI_HILINK_PRODUCT_IDS; do
+        if [ "$product" = "$hilink_product" ]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+read_huawei_usb_ids() {
+    lte_dev="$1"
+
+    mode_vendor="$(get_usb_field "$lte_dev" idVendor || true)"
+    mode_product="$(get_usb_field "$lte_dev" idProduct || true)"
+    if [ -z "$mode_vendor" ] || [ -z "$mode_product" ]; then
+        log "Could not read USB vendor/product IDs for $lte_dev"
+        return 1
+    fi
+
+    log "Current Huawei USB ID is ${mode_vendor}:${mode_product}"
+    return 0
+}
+
+wait_for_huawei_device_after_usb_change() {
+    n=0
+    while [ "$n" -lt 15 ]; do
+        lte_dev="$(find_lte_device || true)"
+        if [ -n "$lte_dev" ] && read_huawei_usb_ids "$lte_dev"; then
+            return 0
+        fi
+
+        n=$((n + 1))
+        sleep 1
+    done
+
+    return 1
+}
+
+wait_for_huawei_hilink_after_usb_change() {
+    n=0
+    seen_id=""
+
+    while [ "$n" -lt 20 ]; do
+        lte_dev="$(find_lte_device || true)"
+        if [ -n "$lte_dev" ] && read_huawei_usb_ids "$lte_dev"; then
+            seen_id="${mode_vendor}:${mode_product}"
+            if usb_product_is_hilink "$mode_product"; then
+                return 0
+            fi
+        fi
+
+        n=$((n + 1))
+        sleep 1
+    done
+
+    if [ -n "$seen_id" ]; then
+        log "Last Huawei USB ID seen while waiting for HiLink: $seen_id"
+    fi
+    return 1
+}
+
+run_hilink_modeswitch_from_storage() {
+    log "Sending HuaweiNewMode usb_modeswitch command for ${HUAWEI_VENDOR_ID}:${HUAWEI_STORAGE_PRODUCT_ID}"
+    if [ ! -f "$HUAWEI_HILINK_MODESWITCH_CONFIG" ]; then
+        log "Missing usb_modeswitch config: $HUAWEI_HILINK_MODESWITCH_CONFIG"
+        return 1
+    fi
+
+    if ! /usr/local/sbin/usb_modeswitch -v 0x12d1 -p 0x1f01 -c /usr/local/share/usb_modeswitch/12d1:1f01; then
+        log "usb_modeswitch exited non-zero while switching from storage mode"
+    fi
+
+    sleep 3
+    if wait_for_huawei_hilink_after_usb_change; then
+        log "Huawei dongle is now in HiLink mode (${mode_vendor}:${mode_product})"
+        wait_for_lte_interface || true
+        return 0
+    fi
+
+    log "Huawei dongle did not reappear as expected HiLink 14db/14dc after storage-mode usb_modeswitch"
+    return 1
+}
+
+switch_huawei_hilink_device() {
+    lte_dev="$(find_lte_device || true)"
+    if [ -z "$lte_dev" ]; then
+        log "No Huawei USB device found"
+        return 1
+    fi
+
+    log "Found Huawei USB device at $lte_dev"
+    if ! read_huawei_usb_ids "$lte_dev"; then
+        return 1
+    fi
+
+    if [ "$mode_vendor" != "$HUAWEI_VENDOR_ID" ]; then
+        log "Device at $lte_dev is not Huawei vendor $HUAWEI_VENDOR_ID"
+        return 1
+    fi
+
+    if usb_product_is_hilink "$mode_product"; then
+        log "Huawei dongle is already in HiLink mode (${mode_vendor}:${mode_product})"
+        wait_for_lte_interface || true
+        return 0
+    fi
+
+    if [ "$mode_product" = "$HUAWEI_STORAGE_PRODUCT_ID" ]; then
+        run_hilink_modeswitch_from_storage
+        return "$?"
+    fi
+
+    if [ "$mode_product" = "$HUAWEI_NCM_PRODUCT_ID" ]; then
+        log "Huawei dongle is in NCM/composite mode (${mode_vendor}:${mode_product}); trying USB reset before storage-mode switch"
+        /usr/local/sbin/usb_modeswitch -v 0x12d1 -p 0x155e -R || true
+        sleep 3
+
+        if ! wait_for_huawei_device_after_usb_change; then
+            log "Huawei device did not reappear after USB reset"
+            return 1
+        fi
+
+        if usb_product_is_hilink "$mode_product"; then
+            log "Huawei dongle entered HiLink mode after USB reset (${mode_vendor}:${mode_product})"
+            wait_for_lte_interface || true
+            return 0
+        fi
+
+        if [ "$mode_product" = "$HUAWEI_STORAGE_PRODUCT_ID" ]; then
+            run_hilink_modeswitch_from_storage
+            return "$?"
+        fi
+
+        log "Huawei dongle stayed in ${mode_vendor}:${mode_product}; power-cycle/unplug dongle, then rerun"
+        return 1
+    fi
+
+    log "Huawei dongle is in unsupported mode ${mode_vendor}:${mode_product}; expected 1f01, 14db, 14dc, or 155e"
+    return 1
+}
+
 switch_huawei_lte_device() {
     lte_dev="$(find_lte_device || true)"
     if [ -n "$lte_dev" ]; then
@@ -1000,6 +1160,43 @@ try_lte_static_ping() {
     return 1
 }
 
+ping_hilink_gateway() {
+    ping -c 1 192.168.8.1 >/dev/null 2>&1
+}
+
+bring_hilink_network_up() {
+    if ! wait_for_lte_interface; then
+        log "$LTE_IFACE is not present; HiLink network interface is not ready"
+        return 1
+    fi
+
+    log "Bringing $LTE_IFACE up for HiLink"
+    if ! ifconfig "$LTE_IFACE" up; then
+        log "Could not bring $LTE_IFACE up"
+        return 1
+    fi
+
+    log "Requesting DHCP lease on $LTE_IFACE so ignore routers applies now"
+    if run_dhclient_once; then
+        log "$LTE_IFACE received an IPv4 DHCP lease"
+        if ping_hilink_gateway; then
+            log "HiLink gateway 192.168.8.1 is pingable via DHCP"
+            return 0
+        fi
+        log "DHCP lease was obtained, but 192.168.8.1 did not answer ping"
+    else
+        log "$LTE_IFACE did not get an IPv4 DHCP lease"
+    fi
+
+    if try_lte_static_ping; then
+        log "Static 192.168.8.2/24 ping to 192.168.8.1 succeeded"
+        return 0
+    fi
+
+    log "Static 192.168.8.2/24 ping to 192.168.8.1 failed"
+    return 1
+}
+
 bring_lte_network_up() {
     lte_dev="$(find_lte_device || true)"
     if ! lte_interface_is_present; then
@@ -1063,6 +1260,36 @@ bring_lte_network_up() {
     return 1
 }
 
+attempt_hilink_setup() {
+    attempt=1
+
+    while [ "$attempt" -le "$LTE_MAX_ATTEMPTS" ]; do
+        log "HiLink discovery attempt $attempt of $LTE_MAX_ATTEMPTS"
+        clear_lte_static_test_address
+        log_lte_snapshot
+
+        if ! switch_huawei_hilink_device; then
+            log "HiLink mode preparation did not complete on attempt $attempt"
+            return 1
+        fi
+
+        configure_freebsd_networking
+
+        if bring_hilink_network_up; then
+            return 0
+        fi
+
+        log "HiLink attempt $attempt did not make 192.168.8.1 pingable"
+        attempt=$((attempt + 1))
+        if [ "$attempt" -le "$LTE_MAX_ATTEMPTS" ]; then
+            log "Rediscovering after USB/modem state settles"
+            sleep 3
+        fi
+    done
+
+    return 1
+}
+
 attempt_lte_setup() {
     attempt=1
 
@@ -1102,17 +1329,32 @@ main() {
     require_command service
     require_command od
     require_command stty
+    require_command ping
     require_command timeout
 
     ensure_usb_modeswitch_package
 
-    if attempt_lte_setup; then
-        log "Huawei LTE setup complete"
-        log "Check with: ifconfig $LTE_IFACE; netstat -rn"
-        return 0
-    fi
-
-    die "$LTE_IFACE is not ready after $LTE_MAX_ATTEMPTS discovery attempts"
+    case "$LTE_TARGET_MODE" in
+        hilink)
+            if attempt_hilink_setup; then
+                log "Huawei HiLink setup complete"
+                log "Check with: ifconfig $LTE_IFACE; ping -c 1 192.168.8.1; netstat -rn"
+                return 0
+            fi
+            die "Huawei HiLink mode is not ready after $LTE_MAX_ATTEMPTS discovery attempts"
+            ;;
+        ncm)
+            if attempt_lte_setup; then
+                log "Huawei NCM LTE setup complete"
+                log "Check with: ifconfig $LTE_IFACE; netstat -rn"
+                return 0
+            fi
+            die "$LTE_IFACE is not ready after $LTE_MAX_ATTEMPTS NCM discovery attempts"
+            ;;
+        *)
+            die "unsupported LTE_TARGET_MODE '$LTE_TARGET_MODE' (expected hilink or ncm)"
+            ;;
+    esac
 }
 
 main "$@"
