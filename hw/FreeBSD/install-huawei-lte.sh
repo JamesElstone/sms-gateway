@@ -37,6 +37,7 @@ NETWORKING_CONFIGURED_IFACE=""
 RADIO_RESET_DONE=0
 PDP_CONTEXT_DONE=0
 RADIO_PROFILE_DONE=0
+STATUS_ONLY=0
 
 log() {
     printf '%s\n' "$*"
@@ -65,6 +66,7 @@ Targets:
 
 Common options:
   -h, --help                       Show this help text.
+      --status                     Show current Huawei USB/network state and exit.
       --target MODE                Set target mode: storage, hilink, or ncm.
       --iface IFACE                USB ethernet interface name. Default: $LTE_IFACE.
       --max-attempts N             Discovery attempts. Default: $LTE_MAX_ATTEMPTS.
@@ -123,6 +125,10 @@ parse_args() {
             -h|--help)
                 usage
                 exit 0
+                ;;
+            --status)
+                STATUS_ONLY=1
+                shift
                 ;;
             --target)
                 [ "$#" -ge 2 ] || usage_error "missing value for --target"
@@ -472,6 +478,13 @@ get_usb_summary() {
 
     usbconfig |
         awk -F: -v dev="$dev" '$1 == dev { print; exit }'
+}
+
+get_usb_description() {
+    dev="$1"
+
+    get_usb_summary "$dev" |
+        sed -n 's/^[^<]*\(<.*>\) at .*/\1/p'
 }
 
 get_usb_config_desc() {
@@ -1221,6 +1234,100 @@ usb_product_is_storage() {
     [ "$1" = "$HUAWEI_STORAGE_PRODUCT_ID" ]
 }
 
+format_usb_id() {
+    vendor="$1"
+    product="$2"
+
+    printf '%s:%s\n' "${vendor#0x}" "${product#0x}"
+}
+
+describe_huawei_product() {
+    product="$1"
+
+    if usb_product_is_storage "$product"; then
+        printf '%s\n' "Huawei storage mode"
+        return
+    fi
+
+    if usb_product_is_hilink "$product"; then
+        printf '%s\n' "Huawei HiLink mode"
+        return
+    fi
+
+    if [ "$product" = "$HUAWEI_NCM_PRODUCT_ID" ]; then
+        printf '%s\n' "Huawei NCM/composite mode"
+        return
+    fi
+
+    printf '%s\n' "Huawei unknown mode"
+}
+
+lte_iface_brief_status() {
+    iface="$1"
+
+    if ! ifconfig "$iface" >/dev/null 2>&1; then
+        printf '%s\n' "not present"
+        return
+    fi
+
+    status="$(ifconfig "$iface" |
+        awk -F: '
+            /^[[:space:]]*status:/ {
+                sub(/^[[:space:]]+/, "", $2)
+                print $2
+                found = 1
+                exit
+            }
+            END {
+                if (!found) {
+                    print "present"
+                }
+            }
+        ')"
+
+    if [ "$status" = "present" ]; then
+        printf '%s\n' "present"
+    else
+        printf 'present, status: %s\n' "$status"
+    fi
+}
+
+report_status() {
+    lte_dev="$(find_lte_device || true)"
+
+    if [ -n "$lte_dev" ]; then
+        mode_vendor="$(get_usb_field "$lte_dev" idVendor || true)"
+        mode_product="$(get_usb_field "$lte_dev" idProduct || true)"
+        description="$(get_usb_description "$lte_dev")"
+        [ -n "$description" ] || description="unknown"
+
+        if [ -n "$mode_vendor" ] && [ -n "$mode_product" ]; then
+            mode_label="$(describe_huawei_product "$mode_product")"
+            id="$(format_usb_id "$mode_vendor" "$mode_product")"
+        else
+            mode_label="Huawei USB device"
+            id="unknown"
+        fi
+
+        printf '%s = %s\n' "$lte_dev" "$mode_label"
+        printf 'description = %s\n' "$description"
+        printf 'id = %s\n' "$id"
+    else
+        printf 'device = not found\n'
+        printf 'description = none\n'
+        printf 'id = none\n'
+    fi
+
+    interfaces="$(ifconfig -l 2>/dev/null || true)"
+    [ -n "$interfaces" ] || interfaces="none"
+    printf 'interfaces = %s\n' "$interfaces"
+    printf '%s = %s\n' "$LTE_IFACE" "$(lte_iface_brief_status "$LTE_IFACE")"
+
+    usb_modeswitch_value="$(sysrc -n usb_modeswitch_enable 2>/dev/null || true)"
+    [ -n "$usb_modeswitch_value" ] || usb_modeswitch_value="unknown"
+    printf 'usb_modeswitch_enable = %s\n' "$usb_modeswitch_value"
+}
+
 read_huawei_usb_ids() {
     lte_dev="$1"
 
@@ -1794,6 +1901,15 @@ attempt_lte_setup() {
 
 main() {
     parse_args "$@"
+
+    if [ "$STATUS_ONLY" -eq 1 ]; then
+        require_root
+        require_command usbconfig
+        require_command ifconfig
+        require_command sysrc
+        report_status
+        return 0
+    fi
 
     : > "$LTE_LOG_FILE" 2>/dev/null || true
     require_root
