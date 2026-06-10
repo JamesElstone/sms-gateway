@@ -41,12 +41,12 @@ STATUS_ONLY=0
 
 log() {
     printf '%s\n' "$*"
-    printf '%s\n' "$*" >> "$LTE_LOG_FILE" 2>/dev/null || true
+    printf '%s\n' "$*" 2>/dev/null >> "$LTE_LOG_FILE" || true
 }
 
 die() {
     printf 'ERROR: %s\n' "$*" >&2
-    printf 'ERROR: %s\n' "$*" >> "$LTE_LOG_FILE" 2>/dev/null || true
+    printf 'ERROR: %s\n' "$*" 2>/dev/null >> "$LTE_LOG_FILE" || true
     exit 1
 }
 
@@ -386,6 +386,32 @@ require_command() {
     command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
+run_usbconfig() {
+    if [ "$(id -u)" -eq 0 ]; then
+        usbconfig "$@"
+        return "$?"
+    fi
+
+    if command -v sudo >/dev/null 2>&1; then
+        sudo -n /usr/sbin/usbconfig "$@" 2>/dev/null && return 0
+    fi
+
+    usbconfig "$@"
+}
+
+run_sysrc_read() {
+    if [ "$(id -u)" -eq 0 ]; then
+        sysrc "$@"
+        return "$?"
+    fi
+
+    if command -v sudo >/dev/null 2>&1; then
+        sudo -n /usr/sbin/sysrc "$@" 2>/dev/null && return 0
+    fi
+
+    sysrc "$@"
+}
+
 ensure_usb_modeswitch_package() {
     if pkg info -e usb_modeswitch >/dev/null 2>&1; then
         log "usb_modeswitch package is already installed"
@@ -463,7 +489,7 @@ get_usb_field() {
     dev="$1"
     field="$2"
 
-    usbconfig -d "$dev" dump_device_desc 2>/dev/null |
+    run_usbconfig -d "$dev" dump_device_desc 2>/dev/null |
         awk -v field="$field" '
             $1 == field {
                 value = tolower($3)
@@ -476,7 +502,7 @@ get_usb_field() {
 get_usb_summary() {
     dev="$1"
 
-    usbconfig |
+    run_usbconfig |
         awk -F: -v dev="$dev" '$1 == dev { print; exit }'
 }
 
@@ -490,17 +516,17 @@ get_usb_description() {
 get_usb_config_desc() {
     dev="$1"
 
-    usbconfig -d "$dev" dump_curr_config_desc 2>/dev/null ||
-        usbconfig -d "$dev" dump_all_config_desc 2>/dev/null ||
+    run_usbconfig -d "$dev" dump_curr_config_desc 2>/dev/null ||
+        run_usbconfig -d "$dev" dump_all_config_desc 2>/dev/null ||
         true
 }
 
 list_usb_devices() {
-    usbconfig | awk -F: '$1 ~ /^ugen[0-9][0-9]*\.[0-9][0-9]*$/ { print $1 }'
+    run_usbconfig | awk -F: '$1 ~ /^ugen[0-9][0-9]*\.[0-9][0-9]*$/ { print $1 }'
 }
 
 find_lte_device_from_summary() {
-    usbconfig |
+    run_usbconfig |
         awk -F: -v name="$USB_DEVICE_NAME" '
             tolower($0) ~ name && $1 ~ /^ugen[0-9][0-9]*\.[0-9][0-9]*$/ {
                 print $1
@@ -514,7 +540,7 @@ find_lte_device_from_summary() {
 descriptor_contains_lte_name() {
     dev="$1"
 
-    usbconfig -d "$dev" dump_device_desc 2>/dev/null |
+    run_usbconfig -d "$dev" dump_device_desc 2>/dev/null |
         awk -v name="$USB_DEVICE_NAME" '
             {
                 line = tolower($0)
@@ -755,7 +781,7 @@ find_lte_serial_ports() {
 }
 
 log_lte_snapshot() {
-    usb_devices="$(usbconfig | awk -v name="$USB_DEVICE_NAME" 'tolower($0) ~ name { printf "%s%s", sep, $1; sep = " " }')"
+    usb_devices="$(run_usbconfig | awk -v name="$USB_DEVICE_NAME" 'tolower($0) ~ name { printf "%s%s", sep, $1; sep = " " }')"
     interfaces="$(list_lte_interfaces | awk '{ printf "%s%s", sep, $1; sep = " " }')"
     ports="$(find_lte_serial_ports | awk '{ printf "%s%s", sep, $1; sep = " " }')"
 
@@ -1323,7 +1349,7 @@ report_status() {
     printf 'interfaces = %s\n' "$interfaces"
     printf '%s = %s\n' "$LTE_IFACE" "$(lte_iface_brief_status "$LTE_IFACE")"
 
-    usb_modeswitch_value="$(sysrc -n usb_modeswitch_enable 2>/dev/null || true)"
+    usb_modeswitch_value="$(run_sysrc_read -n usb_modeswitch_enable 2>/dev/null || true)"
     [ -n "$usb_modeswitch_value" ] || usb_modeswitch_value="unknown"
     printf 'usb_modeswitch_enable = %s\n' "$usb_modeswitch_value"
 }
@@ -1903,7 +1929,6 @@ main() {
     parse_args "$@"
 
     if [ "$STATUS_ONLY" -eq 1 ]; then
-        require_root
         require_command usbconfig
         require_command ifconfig
         require_command sysrc
@@ -1911,8 +1936,8 @@ main() {
         return 0
     fi
 
-    : > "$LTE_LOG_FILE" 2>/dev/null || true
     require_root
+    : 2>/dev/null > "$LTE_LOG_FILE" || true
     require_command pkg
     require_command usbconfig
     require_command ifconfig
