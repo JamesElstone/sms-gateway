@@ -40,7 +40,8 @@ The preferred target is HiLink mode. In HiLink mode the dongle acts like a small
 router on `192.168.8.1`, and FreeBSD sees a USB Ethernet interface such as
 `ue0`.
 
-The installer also ensures `/etc/dhclient.conf` contains a `ue0` block with:
+By default, the installer ensures `/etc/dhclient.conf` contains a `ue0` block
+with:
 
 ```text
 ignore routers;
@@ -48,6 +49,13 @@ ignore routers;
 
 This allows DHCP on `ue0` without letting the LTE dongle replace the system
 default route. On `hydrogen`, the default route should remain on `dwc0`.
+
+To allow the LTE DHCP server to install a default route, use
+`--default-route` for a manual run or set this in `/etc/rc.conf`:
+
+```sh
+lte_route_enable="YES"
+```
 
 ## Commands
 
@@ -72,6 +80,18 @@ sudo ./install-huawei-lte.sh --target hilink
 When this is run from a terminal, the installer prints the final `ifconfig`,
 `ping -c 1 192.168.8.1`, and `netstat -rn` checks after a successful HiLink
 setup.
+
+The default route is suppressed unless `--default-route` is passed:
+
+```sh
+sudo ./install-huawei-lte.sh --target hilink --default-route
+```
+
+The explicit protected form is:
+
+```sh
+sudo ./install-huawei-lte.sh --target hilink --no-default-route
+```
 
 Prepare the host so the dongle can remain in storage mode after a full host
 reboot:
@@ -120,6 +140,7 @@ and writes rc.conf settings like:
 sms_gateway_enable="YES"
 sms_gateway_device_type="huawei-lte"
 sms_gateway_target="hilink"
+lte_route_enable="NO"
 ```
 
 It also removes the legacy `usb_modeswitch_enable` rc.conf knob if present.
@@ -140,8 +161,11 @@ For the default FreeBSD Huawei LTE setup, that resolves to:
 The rc.d service then runs:
 
 ```sh
-install-huawei-lte.sh --service --target "$sms_gateway_target"
+install-huawei-lte.sh --service --target "$sms_gateway_target" --no-default-route
 ```
+
+If `lte_route_enable="YES"` is set in `/etc/rc.conf`, the service passes
+`--default-route` instead.
 
 The default rc.d settings are:
 
@@ -151,6 +175,7 @@ sms_gateway_platform="$(uname -s)"
 sms_gateway_device_type="huawei-lte"
 sms_gateway_target="hilink"
 sms_gateway_start_delay="8"
+lte_route_enable="NO"
 ```
 
 `sms_gateway_start_delay` gives USB and `devd` a short window to settle before
@@ -174,6 +199,7 @@ ue0 = present, status: active
 sms_gateway_enable = YES
 sms_gateway_device_type = huawei-lte
 sms_gateway_target = hilink
+lte_route_enable = NO
 usb_modeswitch_disable_switching = 0
 ```
 

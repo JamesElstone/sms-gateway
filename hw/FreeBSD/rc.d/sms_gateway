@@ -10,6 +10,7 @@
 # sms_gateway_enable="YES"
 # sms_gateway_device_type="huawei-lte"
 # sms_gateway_target="hilink"
+# lte_route_enable="NO"
 #
 
 . /etc/rc.subr
@@ -25,6 +26,7 @@ load_rc_config "$name"
 : ${sms_gateway_device_type:="huawei-lte"}
 : ${sms_gateway_target:="hilink"}
 : ${sms_gateway_start_delay:="8"}
+: ${lte_route_enable:="NO"}
 
 start_cmd="sms_gateway_start"
 status_cmd="sms_gateway_status"
@@ -63,7 +65,7 @@ sms_gateway_install_script()
 
 sms_gateway_start()
 {
-	local script
+	local route_arg script
 
 	if [ "$sms_gateway_start_delay" -gt 0 ] 2>/dev/null; then
 		sleep "$sms_gateway_start_delay"
@@ -73,6 +75,11 @@ sms_gateway_start()
 		return 1
 	fi
 
+	route_arg="--no-default-route"
+	if checkyesno lte_route_enable; then
+		route_arg="--default-route"
+	fi
+
 	script="$(sms_gateway_install_script)" || return 1
 	if [ ! -x "$script" ]; then
 		warn "missing executable install script: $script"
@@ -80,7 +87,7 @@ sms_gateway_start()
 	fi
 
 	echo "Starting ${name}: ${sms_gateway_device_type} target ${sms_gateway_target}."
-	"$script" --service --target "$sms_gateway_target"
+	"$script" --service --target "$sms_gateway_target" "$route_arg"
 }
 
 sms_gateway_status()

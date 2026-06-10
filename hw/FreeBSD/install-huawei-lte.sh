@@ -28,6 +28,7 @@ LTE_STORAGE_AT_RECOVERY="${LTE_STORAGE_AT_RECOVERY:-1}"
 LTE_STORAGE_SETPORT_VALUE="${LTE_STORAGE_SETPORT_VALUE:-A1,A2;10,12,13,16}"
 LTE_STORAGE_U2DIAG_VALUE="${LTE_STORAGE_U2DIAG_VALUE:-255}"
 LTE_LOG_FILE="${LTE_LOG_FILE:-/tmp/install-huawei-lte.log}"
+LTE_ROUTE_ENABLE="${LTE_ROUTE_ENABLE:-NO}"
 USB_MODESWITCH_CONF="${USB_MODESWITCH_CONF:-/usr/local/etc/usb_modeswitch.conf}"
 SMS_GATEWAY_DEVICE_TYPE="${SMS_GATEWAY_DEVICE_TYPE:-huawei-lte}"
 SMS_GATEWAY_RC_SOURCE="${SMS_GATEWAY_RC_SOURCE:-$SCRIPT_DIR/rc.d/sms_gateway}"
@@ -39,6 +40,7 @@ HUAWEI_HILINK_PRODUCT_IDS="0x14db 0x14dc"
 HUAWEI_HILINK_MODESWITCH_CONFIG="/usr/local/share/usb_modeswitch/12d1:1f01"
 DHCPCONF="/etc/dhclient.conf"
 NETWORKING_CONFIGURED_IFACE=""
+DHCLIENT_ROUTE_POLICY_CHANGED=0
 RADIO_RESET_DONE=0
 PDP_CONTEXT_DONE=0
 RADIO_PROFILE_DONE=0
@@ -85,12 +87,15 @@ Common options:
       --iface IFACE                USB ethernet interface name. Default: $LTE_IFACE.
       --max-attempts N             Discovery attempts. Default: $LTE_MAX_ATTEMPTS.
       --log-file PATH              Log file. Default: $LTE_LOG_FILE.
+      --default-route              Allow LTE DHCP to install a default route.
+      --no-default-route           Ignore LTE DHCP routers. This is the default.
 
 Persistence:
   Successful target runs install rc.d/sms_gateway and persist:
       sms_gateway_enable=YES
       sms_gateway_device_type=$SMS_GATEWAY_DEVICE_TYPE
       sms_gateway_target=<target>
+      lte_route_enable=$LTE_ROUTE_ENABLE
 
 NCM/radio options:
       --apn APN                    APN for NCM attach.
@@ -190,6 +195,14 @@ parse_args() {
                 ;;
             --log-file=*)
                 LTE_LOG_FILE="${1#--log-file=}"
+                shift
+                ;;
+            --default-route)
+                LTE_ROUTE_ENABLE=YES
+                shift
+                ;;
+            --no-default-route)
+                LTE_ROUTE_ENABLE=NO
                 shift
                 ;;
             --apn)
@@ -398,6 +411,18 @@ parse_args() {
             usage_error "unsupported target: $LTE_TARGET_MODE (expected storage, hilink, or ncm)"
             ;;
     esac
+
+    case "$LTE_ROUTE_ENABLE" in
+        [Yy][Ee][Ss]|[Yy]|1|[Tt][Rr][Uu][Ee]|[Oo][Nn])
+            LTE_ROUTE_ENABLE=YES
+            ;;
+        [Nn][Oo]|[Nn]|0|[Ff][Aa][Ll][Ss][Ee]|[Oo][Ff][Ff])
+            LTE_ROUTE_ENABLE=NO
+            ;;
+        *)
+            usage_error "unsupported LTE_ROUTE_ENABLE: $LTE_ROUTE_ENABLE (expected YES or NO)"
+            ;;
+    esac
 }
 
 require_root() {
@@ -507,6 +532,81 @@ interface "$iface" {
     ignore routers;
 }
 EOF
+    DHCLIENT_ROUTE_POLICY_CHANGED=1
+}
+
+remove_managed_dhclient_ignore_routers() {
+    iface="$1"
+
+    [ -f "$DHCPCONF" ] || return 0
+
+    tmp_file="${DHCPCONF}.sms_gateway.$$"
+    if awk -v iface="$iface" '
+        function flush_pending() {
+            if (pending != "") {
+                print pending
+                pending = ""
+            }
+        }
+        {
+            if (skip) {
+                if ($0 ~ /^[[:space:]]*}[[:space:]]*$/) {
+                    skip = 0
+                    removed = 1
+                }
+                next
+            }
+
+            if ($0 == "# Added by install-huawei-lte.sh for the Huawei LTE HiLink interface.") {
+                pending = $0
+                next
+            }
+
+            if (pending != "") {
+                if ($0 ~ "^[[:space:]]*interface[[:space:]]+\"" iface "\"[[:space:]]*\\{[[:space:]]*$") {
+                    skip = 1
+                    next
+                }
+                flush_pending()
+            }
+
+            print
+        }
+        END {
+            flush_pending()
+            exit(removed ? 10 : 0)
+        }
+    ' "$DHCPCONF" > "$tmp_file"; then
+        rm -f "$tmp_file"
+        log "$DHCPCONF has no managed ignore routers block for $iface"
+    else
+        status="$?"
+        if [ "$status" -eq 10 ]; then
+            if cat "$tmp_file" > "$DHCPCONF"; then
+                rm -f "$tmp_file"
+                log "Removed managed DHCP router suppression for $iface from $DHCPCONF"
+                DHCLIENT_ROUTE_POLICY_CHANGED=1
+                return 0
+            fi
+        fi
+
+        rm -f "$tmp_file"
+        log "Could not remove managed DHCP router suppression for $iface from $DHCPCONF"
+        return 1
+    fi
+}
+
+allow_dhclient_routers() {
+    iface="$1"
+
+    remove_managed_dhclient_ignore_routers "$iface" || return 1
+
+    if dhclient_has_ignore_routers_for_iface "$iface"; then
+        log "$DHCPCONF still contains ignore routers for $iface; LTE DHCP default route may remain suppressed"
+        return 0
+    fi
+
+    log "DHCP routers are allowed for $iface"
 }
 
 get_usb_field() {
@@ -1441,6 +1541,7 @@ persist_sms_gateway_target() {
     sysrc sms_gateway_enable=YES
     sysrc sms_gateway_device_type="$SMS_GATEWAY_DEVICE_TYPE"
     sysrc sms_gateway_target="$target"
+    sysrc lte_route_enable="$LTE_ROUTE_ENABLE"
     remove_legacy_usb_modeswitch_rc_knob
 }
 
@@ -1484,6 +1585,9 @@ report_status() {
     sms_gateway_target_value="$(run_sysrc_read -n sms_gateway_target 2>/dev/null || true)"
     [ -n "$sms_gateway_target_value" ] || sms_gateway_target_value="unknown"
     printf 'sms_gateway_target = %s\n' "$sms_gateway_target_value"
+    lte_route_value="$(run_sysrc_read -n lte_route_enable 2>/dev/null || true)"
+    [ -n "$lte_route_value" ] || lte_route_value="NO (default)"
+    printf 'lte_route_enable = %s\n' "$lte_route_value"
     printf 'usb_modeswitch_disable_switching = %s\n' "$(read_usb_modeswitch_disable_switching)"
 }
 
@@ -1814,7 +1918,11 @@ switch_huawei_lte_device() {
 configure_freebsd_networking() {
     log "Persisting LTE DHCP interface settings"
     choose_lte_interface || log "No ue* interface is visible yet; configuring expected interface $LTE_IFACE"
-    ensure_dhclient_ignores_routers "$LTE_IFACE"
+    if [ "$LTE_ROUTE_ENABLE" = "YES" ]; then
+        allow_dhclient_routers "$LTE_IFACE"
+    else
+        ensure_dhclient_ignores_routers "$LTE_IFACE"
+    fi
     sysrc ifconfig_"$LTE_IFACE"="DHCP"
 
     if [ "$NETWORKING_CONFIGURED_IFACE" = "$LTE_IFACE" ]; then
@@ -1829,9 +1937,14 @@ configure_freebsd_networking() {
 run_dhclient_once() {
     clear_lte_static_test_address
 
-    if lte_interface_has_dhcp_ipv4; then
+    if [ "$DHCLIENT_ROUTE_POLICY_CHANGED" -eq 0 ] && lte_interface_has_dhcp_ipv4; then
         log "$LTE_IFACE already has an IPv4 DHCP lease; not starting another dhclient"
         return 0
+    fi
+
+    if [ "$DHCLIENT_ROUTE_POLICY_CHANGED" -ne 0 ]; then
+        log "DHCP route policy changed; renewing lease on $LTE_IFACE"
+        dhclient -r "$LTE_IFACE" >/dev/null 2>&1 || true
     fi
 
     pidfile="/var/run/dhclient/dhclient.$LTE_IFACE.pid"
@@ -1884,6 +1997,14 @@ run_dhclient_once() {
     return 1
 }
 
+log_dhcp_request() {
+    if [ "$LTE_ROUTE_ENABLE" = "YES" ]; then
+        log "Requesting DHCP lease on $LTE_IFACE with LTE DHCP routers enabled"
+    else
+        log "Requesting DHCP lease on $LTE_IFACE so ignore routers applies now"
+    fi
+}
+
 try_lte_static_ping() {
     if ! wait_for_lte_interface; then
         return 1
@@ -1919,7 +2040,7 @@ bring_hilink_network_up() {
         return 1
     fi
 
-    log "Requesting DHCP lease on $LTE_IFACE so ignore routers applies now"
+    log_dhcp_request
     if run_dhclient_once; then
         log "$LTE_IFACE received an IPv4 DHCP lease"
         if ping_hilink_gateway; then
@@ -2018,7 +2139,7 @@ bring_lte_network_up() {
         log "$LTE_IFACE status is $(lte_interface_status); trying DHCP anyway"
     fi
 
-    log "Requesting DHCP lease on $LTE_IFACE so ignore routers applies now"
+    log_dhcp_request
     if run_dhclient_once; then
         log "$LTE_IFACE received an IPv4 DHCP lease"
         return 0
