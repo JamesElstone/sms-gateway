@@ -50,6 +50,11 @@ ignore routers;
 This allows DHCP on `ue0` without letting the LTE dongle replace the system
 default route. On `hydrogen`, the default route should remain on `dwc0`.
 
+That is the intended default for this project: the device is primarily an SMS
+gateway, not the host's general-purpose LTE router. Leave LTE default-route
+installation disabled unless this machine should deliberately send normal
+outbound traffic through the modem.
+
 To allow the LTE DHCP server to install a default route, use
 `--default-route` for a manual run or set this in `/etc/rc.conf`:
 
