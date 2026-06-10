@@ -9,7 +9,8 @@ LTE_MAX_ATTEMPTS="${LTE_MAX_ATTEMPTS:-1}"
 LTE_ENABLE_SERIAL_FALLBACK="${LTE_ENABLE_SERIAL_FALLBACK:-0}"
 LTE_ENABLE_AT_STATUS="${LTE_ENABLE_AT_STATUS:-1}"
 LTE_AT_READ_TIMEOUT="${LTE_AT_READ_TIMEOUT:-1}"
-LTE_NDIS_INDEXES="${LTE_NDIS_INDEXES:-2}"
+LTE_NDIS_INDEXES="${LTE_NDIS_INDEXES:-2 1 3 0}"
+LTE_NDIS_DISCONNECT_FIRST="${LTE_NDIS_DISCONNECT_FIRST:-1}"
 LTE_REGISTRATION_WAIT="${LTE_REGISTRATION_WAIT:-30}"
 LTE_APN_CANDIDATES="${LTE_APN_CANDIDATES:-internet}"
 DHCPCONF="/etc/dhclient.conf"
@@ -636,6 +637,20 @@ send_huawei_ndis_connect() {
 
     ifconfig "$LTE_IFACE" up 2>/dev/null || true
 
+    if [ "$LTE_NDIS_DISCONNECT_FIRST" != "0" ]; then
+        disconnect_command="AT^NDISDUP=1,0"
+        encoded="$(at_command_to_usb_bytes "$disconnect_command")"
+        byte_args="$(printf '%s\n' "$encoded" | sed -n '1p')"
+        byte_count="$(printf '%s\n' "$encoded" | sed -n '2p')"
+
+        for request_index in $LTE_NDIS_INDEXES; do
+            log "Sending NDIS disconnect on USB interface index $request_index"
+            # shellcheck disable=SC2086
+            usbconfig -d "$lte_dev" -i 0 do_request 0x21 0 0 "$request_index" "$byte_count" $byte_args >/dev/null 2>&1 || true
+        done
+        sleep 1
+    fi
+
     for apn in $apn_list; do
         if [ "$apn" = "__none__" ]; then
             ndis_command="$(build_huawei_ndis_command "")"
@@ -682,6 +697,11 @@ switch_huawei_lte_device() {
     lte_dev="$(find_lte_device || true)"
     if [ -n "$lte_dev" ]; then
         log "Found HUAWEIMOBILE USB device at $lte_dev"
+        mode_vendor="$(get_usb_field "$lte_dev" idVendor || true)"
+        mode_product="$(get_usb_field "$lte_dev" idProduct || true)"
+        if [ -n "$mode_vendor" ] && [ -n "$mode_product" ]; then
+            log "Current Huawei USB ID is ${mode_vendor}:${mode_product}"
+        fi
     fi
 
     if [ -z "$lte_dev" ]; then
@@ -801,7 +821,12 @@ try_lte_static_ping() {
         ifconfig "$LTE_IFACE" inet 192.168.8.2 netmask 255.255.255.0 >/dev/null 2>&1 ||
         return 1
 
-    ping -c 1 -S 192.168.8.2 192.168.8.1 >/dev/null 2>&1
+    if ping -c 1 -S 192.168.8.2 192.168.8.1 >/dev/null 2>&1; then
+        return 0
+    fi
+
+    clear_lte_static_test_address
+    return 1
 }
 
 bring_lte_network_up() {
