@@ -557,6 +557,9 @@ log_huawei_at_status() {
         query_at_port "$port" "AT" || continue
         write_at_port "$port" "ATE0" || true
         query_at_port "$port" "AT+CMEE=2" || true
+        query_at_port "$port" "AT+CREG=2" || true
+        query_at_port "$port" "AT+CGREG=2" || true
+        query_at_port "$port" "AT+CEREG=2" || true
         query_at_port "$port" "AT+CPIN?" || true
         query_at_port "$port" "AT^SIMST?" || true
         query_at_port "$port" "AT^CARDLOCK?" || true
@@ -576,6 +579,7 @@ log_huawei_at_status() {
         fi
         query_at_port "$port" "AT^SYSINFOEX" || true
         query_at_port "$port" "AT^NDISSTATQRY?" || true
+        query_at_port "$port" "AT+CEER" || true
         return 0
     done
 
@@ -634,11 +638,15 @@ reset_huawei_radio_once() {
         fi
 
         query_at_port "$port" "AT+CMEE=2" || true
+        query_at_port "$port" "AT+CREG=2" || true
+        query_at_port "$port" "AT+CGREG=2" || true
+        query_at_port "$port" "AT+CEREG=2" || true
         query_at_port "$port" "AT+CFUN=0" || true
         sleep 3
         query_at_port "$port" "AT+CFUN=1" || true
         sleep 3
         query_at_port "$port" "AT+COPS=0" || true
+        query_at_port "$port" "AT+COPS=0,2" || true
         log "Waiting ${LTE_POST_RADIO_RESET_WAIT}s after radio reset"
         sleep "$LTE_POST_RADIO_RESET_WAIT"
 
@@ -687,9 +695,11 @@ configure_huawei_pdp_context_once() {
             query_at_port "$port" "AT+CGDCONT=1,\"IP\",\"$apn\"" || true
             query_at_port "$port" "AT+CGDCONT?" || true
             query_at_port "$port" "AT+CGATT=1" || true
+            query_at_port "$port" "AT+CEER" || true
             sleep 3
             query_at_port "$port" "AT+CGATT?" || true
             query_at_port "$port" "AT+CEREG?" || true
+            query_at_port "$port" "AT+CEER" || true
             break
         done
 
