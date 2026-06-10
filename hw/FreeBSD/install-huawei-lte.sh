@@ -9,6 +9,7 @@ LTE_MAX_ATTEMPTS="${LTE_MAX_ATTEMPTS:-1}"
 LTE_ENABLE_SERIAL_FALLBACK="${LTE_ENABLE_SERIAL_FALLBACK:-1}"
 LTE_AT_READ_TIMEOUT="${LTE_AT_READ_TIMEOUT:-1}"
 LTE_NDIS_INDEXES="${LTE_NDIS_INDEXES:-2}"
+LTE_REGISTRATION_WAIT="${LTE_REGISTRATION_WAIT:-30}"
 DHCPCONF="/etc/dhclient.conf"
 NETWORKING_CONFIGURED_IFACE=""
 
@@ -410,29 +411,105 @@ write_at_port() {
     { printf '%s\r\n' "$command" > "$port"; } 2>/dev/null
 }
 
-query_at_port() {
+at_port_response() {
     port="$1"
     command="$2"
 
-    response="$(
-        timeout 3 sh -c '
+    timeout 4 sh -c '
             port="$1"
             command="$2"
             read_timeout="$3"
             exec 3<> "$port" || exit 1
+            timeout "$read_timeout" dd bs=1 count=1024 <&3 >/dev/null 2>&1 || true
             printf "%s\r\n" "$command" >&3 || exit 1
-            timeout "$read_timeout" dd bs=1 count=512 <&3 2>/dev/null
+            timeout "$read_timeout" dd bs=1 count=1024 <&3 2>/dev/null
         ' at-query "$port" "$command" "$LTE_AT_READ_TIMEOUT" |
-            tr '\r' '\n' |
-            awk 'NF { print }'
-    )"
+        tr '\r' '\n' |
+        awk 'NF { print }'
+}
+
+response_has_ok() {
+    awk '
+        {
+            for (i = 1; i <= NF; i++) {
+                if ($i == "OK") {
+                    found = 1
+                }
+            }
+        }
+        END { exit(found ? 0 : 1) }
+    '
+}
+
+query_at_port() {
+    port="$1"
+    command="$2"
+
+    response="$(at_port_response "$port" "$command")"
 
     if [ -n "$response" ]; then
         log "$port $command -> $(printf '%s' "$response" | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g')"
-        return 0
+        printf '%s\n' "$response" | response_has_ok
+        return "$?"
     fi
 
     log "$port $command -> no response"
+    return 1
+}
+
+response_shows_registration() {
+    grep -Eq '\+(CEREG|CREG|CGREG):[[:space:]]*[0-9]+,[[:space:]]*(1|5)([^0-9]|$)'
+}
+
+response_shows_attachment() {
+    grep -Eq '\+CGATT:[[:space:]]*1([^0-9]|$)'
+}
+
+log_at_response() {
+    port="$1"
+    command="$2"
+    response="$3"
+
+    if [ -n "$response" ]; then
+        log "$port $command -> $(printf '%s' "$response" | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g')"
+    else
+        log "$port $command -> no response"
+    fi
+}
+
+wait_for_modem_registration() {
+    port="$1"
+    waited=0
+
+    while [ "$waited" -le "$LTE_REGISTRATION_WAIT" ]; do
+        cereg_response="$(at_port_response "$port" "AT+CEREG?")"
+        log_at_response "$port" "AT+CEREG?" "$cereg_response"
+        if printf '%s\n' "$cereg_response" | response_shows_registration; then
+            log "Modem reports EPS/LTE registration on $port"
+            return 0
+        fi
+
+        creg_response="$(at_port_response "$port" "AT+CREG?")"
+        log_at_response "$port" "AT+CREG?" "$creg_response"
+        if printf '%s\n' "$creg_response" | response_shows_registration; then
+            log "Modem reports circuit registration on $port"
+            return 0
+        fi
+
+        cgatt_response="$(at_port_response "$port" "AT+CGATT?")"
+        log_at_response "$port" "AT+CGATT?" "$cgatt_response"
+        if printf '%s\n' "$cgatt_response" | response_shows_attachment; then
+            log "Modem reports packet attachment on $port"
+            return 0
+        fi
+
+        waited=$((waited + 5))
+        if [ "$waited" -le "$LTE_REGISTRATION_WAIT" ]; then
+            sleep 5
+        fi
+    done
+
+    log "Modem did not report network registration within ${LTE_REGISTRATION_WAIT}s"
     return 1
 }
 
@@ -494,6 +571,7 @@ send_huawei_serial_connect() {
         sleep 1
         write_at_port "$port" "AT+COPS=0" || true
         sleep 1
+        wait_for_modem_registration "$port" || true
 
         if [ -n "$LTE_APN" ]; then
             write_at_port "$port" "AT+CGDCONT=1,\"IP\",\"$LTE_APN\"" || true
