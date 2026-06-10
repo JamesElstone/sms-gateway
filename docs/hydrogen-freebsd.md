@@ -32,12 +32,30 @@ Create a token hash with:
 php -r 'echo hash("sha256", $argv[1]) . PHP_EOL;' 'your-long-secret-token'
 ```
 
-Install `apache/sms-gateway.conf` under Apache's included vhost configuration and
-restart Apache:
+Install the FreeBSD apache24 include into Apache's standard Includes directory,
+then test and reload Apache:
 
 ```sh
-sudo service apache24 restart
+sudo install -m 0644 /usr/local/www/sms-gateway/hw/FreeBSD/apache24/sms-gateway.conf /usr/local/etc/apache24/Includes/sms-gateway.conf
+sudo apachectl configtest
+sudo service apache24 reload
 ```
+
+The include mounts the local PHP gateway API under the existing/default website:
+
+```text
+http://hydrogen.int.elstone.net/sms-gateway/send/{mobile-number}
+```
+
+It also reverse-proxies the LTE dongle web interface:
+
+```text
+http://hydrogen.int.elstone.net/lte-device/
+```
+
+The `/lte-device/` route proxies to `http://192.168.8.1/`. The include loads the
+needed Apache proxy modules if they are not already loaded, so no
+`/usr/local/etc/apache24/httpd.conf` edit is required.
 
 ## LTE USB dongle mode
 

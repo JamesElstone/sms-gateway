@@ -21,6 +21,28 @@ The repository copy of that wrapper lives at:
 hw/FreeBSD/rc.d/sms_gateway
 ```
 
+The Apache include for exposing the SMS endpoint and reverse-proxying the LTE
+dongle web interface through the existing apache24 site lives at:
+
+```sh
+hw/FreeBSD/apache24/sms-gateway.conf
+```
+
+Install it on Hydrogen as:
+
+```sh
+sudo install -m 0644 /usr/local/www/sms-gateway/hw/FreeBSD/apache24/sms-gateway.conf /usr/local/etc/apache24/Includes/sms-gateway.conf
+sudo apachectl configtest
+sudo service apache24 reload
+```
+
+After installation, the expected routes are:
+
+```text
+http://hydrogen.int.elstone.net/sms-gateway/send/{mobile-number}
+http://hydrogen.int.elstone.net/lte-device/
+```
+
 ## What The Installer Does
 
 `install-huawei-lte.sh` detects a Huawei USB LTE dongle, works out its current
