@@ -1666,8 +1666,28 @@ configure_freebsd_networking() {
 run_dhclient_once() {
     clear_lte_static_test_address
 
+    if lte_interface_has_dhcp_ipv4; then
+        log "$LTE_IFACE already has an IPv4 DHCP lease; not starting another dhclient"
+        return 0
+    fi
+
     pidfile="/var/run/dhclient/dhclient.$LTE_IFACE.pid"
     if [ -f "$pidfile" ]; then
+        dhclient_pid="$(sed -n '1p' "$pidfile" 2>/dev/null || true)"
+        if [ -n "$dhclient_pid" ] && kill -0 "$dhclient_pid" >/dev/null 2>&1; then
+            log "dhclient is already running for $LTE_IFACE; waiting for an IPv4 lease"
+            n=0
+            while [ "$n" -lt 10 ]; do
+                if lte_interface_has_dhcp_ipv4; then
+                    return 0
+                fi
+
+                n=$((n + 1))
+                sleep 1
+            done
+            return 1
+        fi
+
         dhclient -r "$LTE_IFACE" >/dev/null 2>&1 || true
     fi
 
