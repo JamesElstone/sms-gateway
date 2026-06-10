@@ -18,10 +18,14 @@ LTE_OPERATOR_SCAN_TIMEOUT="${LTE_OPERATOR_SCAN_TIMEOUT:-70}"
 LTE_RADIO_RESET_FIRST="${LTE_RADIO_RESET_FIRST:-1}"
 LTE_POST_RADIO_RESET_WAIT="${LTE_POST_RADIO_RESET_WAIT:-20}"
 LTE_CONFIGURE_PDP_CONTEXT="${LTE_CONFIGURE_PDP_CONTEXT:-1}"
+LTE_SYSCFGEX_MODE="${LTE_SYSCFGEX_MODE:-03}"
+LTE_SYSCFGEX_BAND="${LTE_SYSCFGEX_BAND:-3FFFFFFF}"
+LTE_SYSCFGEX_LTE_BAND="${LTE_SYSCFGEX_LTE_BAND:-7FFFFFFFFFFFFFFF}"
 DHCPCONF="/etc/dhclient.conf"
 NETWORKING_CONFIGURED_IFACE=""
 RADIO_RESET_DONE=0
 PDP_CONTEXT_DONE=0
+RADIO_PROFILE_DONE=0
 
 log() {
     printf '%s\n' "$*"
@@ -578,6 +582,38 @@ log_huawei_at_status() {
     return 1
 }
 
+configure_huawei_radio_profile_once() {
+    [ -n "$LTE_SYSCFGEX_MODE" ] || return 0
+    [ "$RADIO_PROFILE_DONE" -eq 0 ] || return 0
+
+    ports="$(find_lte_serial_ports)"
+    if [ -z "$ports" ]; then
+        log "No /dev/cuaU* modem command ports found for radio profile setup"
+        return 1
+    fi
+
+    for port in $ports; do
+        log "Trying Huawei radio profile setup on $port"
+        stty -f "$port" 115200 cs8 -parenb -cstopb -echo >/dev/null 2>&1 || true
+
+        if ! query_at_port "$port" "AT"; then
+            log "Could not write AT probe to $port for radio profile setup"
+            continue
+        fi
+
+        query_at_port "$port" "AT+CMEE=2" || true
+        query_at_port "$port" "AT^SYSCFGEX?" || true
+        log "Setting Huawei SYSCFGEX mode '$LTE_SYSCFGEX_MODE' with broad band masks"
+        query_at_port "$port" "AT^SYSCFGEX=\"$LTE_SYSCFGEX_MODE\",$LTE_SYSCFGEX_BAND,1,2,$LTE_SYSCFGEX_LTE_BAND,," || true
+        query_at_port "$port" "AT^SYSCFGEX?" || true
+
+        RADIO_PROFILE_DONE=1
+        return 0
+    done
+
+    return 1
+}
+
 reset_huawei_radio_once() {
     [ "$LTE_RADIO_RESET_FIRST" != "0" ] || return 0
     [ "$RADIO_RESET_DONE" -eq 0 ] || return 0
@@ -961,6 +997,7 @@ bring_lte_network_up() {
     fi
 
     if [ -n "$lte_dev" ] && lte_usb_uses_ncm "$lte_dev"; then
+        configure_huawei_radio_profile_once || true
         reset_huawei_radio_once || true
         configure_huawei_pdp_context_once || true
         send_huawei_ndis_connect "$lte_dev" || true
