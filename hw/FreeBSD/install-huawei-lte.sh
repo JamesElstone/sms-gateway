@@ -1508,7 +1508,7 @@ prepare_huawei_storage_mode_from_ncm() {
 
     log "Host is prepared to switch the dongle to storage mode on the next physical attach"
     log "Physically unplug/replug the dongle, then run: ./install-huawei-lte.sh --status"
-    log "Run ./install-huawei-lte.sh --target storage after replug if you want the storage target to complete successfully"
+    log "Storage mode is confirmed when --status shows id = 12d1:1f01"
     return 1
 }
 
@@ -1882,7 +1882,7 @@ attempt_storage_setup() {
         log "Huawei dongle is in HiLink mode (${mode_vendor}:${mode_product})"
         log "Host is prepared to switch the dongle to storage mode on the next physical attach"
         log "Physically unplug/replug the dongle, then run: ./install-huawei-lte.sh --status"
-        log "Run ./install-huawei-lte.sh --target storage after replug if you want the storage target to complete successfully"
+        log "Storage mode is confirmed when --status shows id = 12d1:1f01"
         return 1
     fi
 
