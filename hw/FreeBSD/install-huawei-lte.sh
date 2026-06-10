@@ -1440,6 +1440,12 @@ disable_usb_modeswitch_autoswitch() {
     service devd restart
 }
 
+enable_usb_modeswitch_autoswitch() {
+    log "Enabling automatic usb_modeswitch for HiLink recovery"
+    sysrc usb_modeswitch_enable=YES
+    service devd restart
+}
+
 reset_huawei_usb_device() {
     product="$1"
 
@@ -1549,6 +1555,32 @@ run_hilink_modeswitch_from_storage() {
     return 1
 }
 
+recover_hilink_from_ncm() {
+    log "Huawei dongle is in NCM/composite mode (${mode_vendor}:${mode_product}); trying USB reset before storage-mode switch"
+    enable_usb_modeswitch_autoswitch
+    reset_huawei_usb_device "$HUAWEI_NCM_PRODUCT_ID"
+    sleep 3
+
+    if ! wait_for_huawei_device_after_usb_change; then
+        log "Huawei device did not reappear after USB reset"
+        return 1
+    fi
+
+    if usb_product_is_hilink "$mode_product"; then
+        log "Huawei dongle entered HiLink mode after USB reset (${mode_vendor}:${mode_product})"
+        wait_for_lte_interface || true
+        return 0
+    fi
+
+    if usb_product_is_storage "$mode_product"; then
+        run_hilink_modeswitch_from_storage
+        return "$?"
+    fi
+
+    log "Huawei dongle stayed in ${mode_vendor}:${mode_product}; power-cycle/unplug dongle, then rerun"
+    return 1
+}
+
 switch_huawei_hilink_device() {
     lte_dev="$(find_lte_device || true)"
     if [ -z "$lte_dev" ]; then
@@ -1578,23 +1610,8 @@ switch_huawei_hilink_device() {
     fi
 
     if [ "$mode_product" = "$HUAWEI_NCM_PRODUCT_ID" ]; then
-        log "Huawei dongle is in NCM/composite mode (${mode_vendor}:${mode_product}); preparing storage-mode recovery"
-        if ! prepare_huawei_storage_mode_from_ncm; then
-            return 1
-        fi
-
-        if usb_product_is_hilink "$mode_product"; then
-            wait_for_lte_interface || true
-            return 0
-        fi
-
-        if usb_product_is_storage "$mode_product"; then
-            run_hilink_modeswitch_from_storage
-            return "$?"
-        fi
-
-        log "Huawei dongle is still ${mode_vendor}:${mode_product}; cannot switch to HiLink from this mode"
-        return 1
+        recover_hilink_from_ncm
+        return "$?"
     fi
 
     log "Huawei dongle is in unsupported mode ${mode_vendor}:${mode_product}; expected 1f01, 14db, 14dc, or 155e"
