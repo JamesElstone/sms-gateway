@@ -528,11 +528,16 @@ log_huawei_at_status() {
         query_at_port "$port" "AT" || continue
         write_at_port "$port" "ATE0" || true
         query_at_port "$port" "AT+CPIN?" || true
+        query_at_port "$port" "AT+CFUN?" || true
         query_at_port "$port" "AT+CSQ" || true
+        query_at_port "$port" "AT^HCSQ?" || true
+        query_at_port "$port" "AT+CGDCONT?" || true
         query_at_port "$port" "AT+CGATT?" || true
         query_at_port "$port" "AT+CREG?" || true
+        query_at_port "$port" "AT+CGREG?" || true
         query_at_port "$port" "AT+CEREG?" || true
         query_at_port "$port" "AT+COPS?" || true
+        query_at_port "$port" "AT^SYSINFOEX" || true
         query_at_port "$port" "AT^NDISSTATQRY?" || true
         return 0
     done
