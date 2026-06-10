@@ -7,16 +7,16 @@ LTE_APN="${LTE_APN:-}"
 LTE_AT_PORT="${LTE_AT_PORT:-}"
 LTE_MAX_ATTEMPTS="${LTE_MAX_ATTEMPTS:-1}"
 LTE_ENABLE_SERIAL_FALLBACK="${LTE_ENABLE_SERIAL_FALLBACK:-0}"
-LTE_ENABLE_AT_STATUS="${LTE_ENABLE_AT_STATUS:-1}"
+LTE_ENABLE_AT_STATUS="${LTE_ENABLE_AT_STATUS:-0}"
 LTE_AT_READ_TIMEOUT="${LTE_AT_READ_TIMEOUT:-1}"
 LTE_NDIS_INDEXES="${LTE_NDIS_INDEXES:-2}"
 LTE_NDIS_DISCONNECT_FIRST="${LTE_NDIS_DISCONNECT_FIRST:-1}"
-LTE_REGISTRATION_WAIT="${LTE_REGISTRATION_WAIT:-30}"
+LTE_REGISTRATION_WAIT="${LTE_REGISTRATION_WAIT:-45}"
 LTE_APN_CANDIDATES="${LTE_APN_CANDIDATES:-internet}"
 LTE_OPERATOR_SCAN="${LTE_OPERATOR_SCAN:-0}"
 LTE_OPERATOR_SCAN_TIMEOUT="${LTE_OPERATOR_SCAN_TIMEOUT:-70}"
 LTE_RADIO_RESET_FIRST="${LTE_RADIO_RESET_FIRST:-1}"
-LTE_POST_RADIO_RESET_WAIT="${LTE_POST_RADIO_RESET_WAIT:-20}"
+LTE_POST_RADIO_RESET_WAIT="${LTE_POST_RADIO_RESET_WAIT:-5}"
 LTE_CONFIGURE_PDP_CONTEXT="${LTE_CONFIGURE_PDP_CONTEXT:-1}"
 LTE_SYSCFGEX_MODE="${LTE_SYSCFGEX_MODE:-03}"
 LTE_SYSCFGEX_BAND="${LTE_SYSCFGEX_BAND:-3FFFFFFF}"
@@ -523,13 +523,6 @@ wait_for_modem_registration() {
             return 0
         fi
 
-        creg_response="$(at_port_response "$port" "AT+CREG?")"
-        log_at_response "$port" "AT+CREG?" "$creg_response"
-        if printf '%s\n' "$creg_response" | response_shows_registration; then
-            log "Modem reports circuit registration on $port"
-            return 0
-        fi
-
         cgatt_response="$(at_port_response "$port" "AT+CGATT?")"
         log_at_response "$port" "AT+CGATT?" "$cgatt_response"
         if printf '%s\n' "$cgatt_response" | response_shows_attachment; then
@@ -652,8 +645,8 @@ reset_huawei_radio_once() {
 
         query_at_port "$port" "AT+CSQ" || true
         query_at_port "$port" "AT^HCSQ?" || true
-        query_at_port "$port" "AT+CEREG?" || true
-        query_at_port "$port" "AT+CGATT?" || true
+        wait_for_modem_registration "$port" || true
+        query_at_port "$port" "AT+CEER" || true
 
         RADIO_RESET_DONE=1
         return 0
