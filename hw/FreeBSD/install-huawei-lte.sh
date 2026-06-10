@@ -2,6 +2,7 @@
 set -eu
 
 USB_DEVICE_NAME="huaweimobile"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 LTE_TARGET_MODE="${LTE_TARGET_MODE:-hilink}"
 LTE_IFACE="${LTE_IFACE:-ue0}"
 LTE_APN="${LTE_APN:-}"
@@ -28,6 +29,9 @@ LTE_STORAGE_SETPORT_VALUE="${LTE_STORAGE_SETPORT_VALUE:-A1,A2;10,12,13,16}"
 LTE_STORAGE_U2DIAG_VALUE="${LTE_STORAGE_U2DIAG_VALUE:-255}"
 LTE_LOG_FILE="${LTE_LOG_FILE:-/tmp/install-huawei-lte.log}"
 USB_MODESWITCH_CONF="${USB_MODESWITCH_CONF:-/usr/local/etc/usb_modeswitch.conf}"
+SMS_GATEWAY_DEVICE_TYPE="${SMS_GATEWAY_DEVICE_TYPE:-huawei-lte}"
+SMS_GATEWAY_RC_SOURCE="${SMS_GATEWAY_RC_SOURCE:-$SCRIPT_DIR/rc.d/sms_gateway}"
+SMS_GATEWAY_RC_DEST="${SMS_GATEWAY_RC_DEST:-/usr/local/etc/rc.d/sms_gateway}"
 HUAWEI_VENDOR_ID="0x12d1"
 HUAWEI_STORAGE_PRODUCT_ID="0x1f01"
 HUAWEI_NCM_PRODUCT_ID="0x155e"
@@ -79,6 +83,12 @@ Common options:
       --iface IFACE                USB ethernet interface name. Default: $LTE_IFACE.
       --max-attempts N             Discovery attempts. Default: $LTE_MAX_ATTEMPTS.
       --log-file PATH              Log file. Default: $LTE_LOG_FILE.
+
+Persistence:
+  Successful target runs install rc.d/sms_gateway and persist:
+      sms_gateway_enable=YES
+      sms_gateway_device_type=$SMS_GATEWAY_DEVICE_TYPE
+      sms_gateway_target=<target>
 
 NCM/radio options:
       --apn APN                    APN for NCM attach.
@@ -1394,6 +1404,40 @@ set_usb_modeswitch_disable_switching() {
     log "Set $USB_MODESWITCH_CONF DisableSwitching=$value"
 }
 
+install_sms_gateway_rc_service() {
+    if [ ! -f "$SMS_GATEWAY_RC_SOURCE" ]; then
+        log "Missing sms_gateway rc.d source: $SMS_GATEWAY_RC_SOURCE"
+        return 1
+    fi
+
+    if [ -f "$SMS_GATEWAY_RC_DEST" ] && cmp -s "$SMS_GATEWAY_RC_SOURCE" "$SMS_GATEWAY_RC_DEST"; then
+        chmod 555 "$SMS_GATEWAY_RC_DEST" 2>/dev/null || true
+        log "$SMS_GATEWAY_RC_DEST is already installed"
+        return 0
+    fi
+
+    log "Installing sms_gateway rc.d service to $SMS_GATEWAY_RC_DEST"
+    cp "$SMS_GATEWAY_RC_SOURCE" "$SMS_GATEWAY_RC_DEST"
+    chmod 555 "$SMS_GATEWAY_RC_DEST"
+}
+
+remove_legacy_usb_modeswitch_rc_knob() {
+    if sysrc -n usb_modeswitch_enable >/dev/null 2>&1; then
+        log "Removing legacy usb_modeswitch_enable rc.conf knob"
+        sysrc -x usb_modeswitch_enable >/dev/null 2>&1 || true
+    fi
+}
+
+persist_sms_gateway_target() {
+    target="$1"
+
+    install_sms_gateway_rc_service || return 1
+    sysrc sms_gateway_enable=YES
+    sysrc sms_gateway_device_type="$SMS_GATEWAY_DEVICE_TYPE"
+    sysrc sms_gateway_target="$target"
+    remove_legacy_usb_modeswitch_rc_knob
+}
+
 report_status() {
     lte_dev="$(find_lte_device || true)"
 
@@ -1425,9 +1469,15 @@ report_status() {
     printf 'interfaces = %s\n' "$interfaces"
     printf '%s = %s\n' "$LTE_IFACE" "$(lte_iface_brief_status "$LTE_IFACE")"
 
-    usb_modeswitch_value="$(run_sysrc_read -n usb_modeswitch_enable 2>/dev/null || true)"
-    [ -n "$usb_modeswitch_value" ] || usb_modeswitch_value="unknown"
-    printf 'usb_modeswitch_enable = %s\n' "$usb_modeswitch_value"
+    sms_gateway_value="$(run_sysrc_read -n sms_gateway_enable 2>/dev/null || true)"
+    [ -n "$sms_gateway_value" ] || sms_gateway_value="unknown"
+    printf 'sms_gateway_enable = %s\n' "$sms_gateway_value"
+    sms_gateway_type="$(run_sysrc_read -n sms_gateway_device_type 2>/dev/null || true)"
+    [ -n "$sms_gateway_type" ] || sms_gateway_type="unknown"
+    printf 'sms_gateway_device_type = %s\n' "$sms_gateway_type"
+    sms_gateway_target_value="$(run_sysrc_read -n sms_gateway_target 2>/dev/null || true)"
+    [ -n "$sms_gateway_target_value" ] || sms_gateway_target_value="unknown"
+    printf 'sms_gateway_target = %s\n' "$sms_gateway_target_value"
     printf 'usb_modeswitch_disable_switching = %s\n' "$(read_usb_modeswitch_disable_switching)"
 }
 
@@ -1509,14 +1559,12 @@ wait_for_huawei_storage_after_usb_change() {
 disable_usb_modeswitch_autoswitch() {
     log "Setting usb_modeswitch DisableSwitching=1 so the dongle stays in storage mode on attach"
     set_usb_modeswitch_disable_switching 1
-    sysrc usb_modeswitch_enable=YES
     service devd restart
 }
 
 enable_usb_modeswitch_autoswitch() {
     log "Setting usb_modeswitch DisableSwitching=0 so the dongle can switch to HiLink mode"
     set_usb_modeswitch_disable_switching 0
-    sysrc usb_modeswitch_enable=YES
     service devd restart
 }
 
@@ -1615,7 +1663,6 @@ run_hilink_modeswitch_from_storage() {
     fi
 
     set_usb_modeswitch_disable_switching 0
-    sysrc usb_modeswitch_enable=YES
 
     if ! /usr/local/sbin/usb_modeswitch -v 0x12d1 -p 0x1f01 -c /usr/local/share/usb_modeswitch/12d1:1f01; then
         log "usb_modeswitch exited non-zero while switching from storage mode"
@@ -1759,10 +1806,9 @@ switch_huawei_lte_device() {
 }
 
 configure_freebsd_networking() {
-    log "Persisting LTE mode-switch and DHCP interface settings"
+    log "Persisting LTE DHCP interface settings"
     choose_lte_interface || log "No ue* interface is visible yet; configuring expected interface $LTE_IFACE"
     ensure_dhclient_ignores_routers "$LTE_IFACE"
-    sysrc usb_modeswitch_enable=YES
     sysrc ifconfig_"$LTE_IFACE"="DHCP"
 
     if [ "$NETWORKING_CONFIGURED_IFACE" = "$LTE_IFACE" ]; then
@@ -2081,6 +2127,7 @@ main() {
     case "$LTE_TARGET_MODE" in
         storage)
             if attempt_storage_setup; then
+                persist_sms_gateway_target storage
                 if [ "$STORAGE_REBOOT_REQUIRED" -eq 1 ]; then
                     log "Huawei storage-mode host preparation complete"
                     log "Storage mode should be active after a full hydrogen reboot"
@@ -2094,6 +2141,7 @@ main() {
             ;;
         hilink)
             if attempt_hilink_setup; then
+                persist_sms_gateway_target hilink
                 log "Huawei HiLink setup complete"
                 log "Check with: ifconfig $LTE_IFACE; ping -c 1 192.168.8.1; netstat -rn"
                 return 0
@@ -2102,6 +2150,7 @@ main() {
             ;;
         ncm)
             if attempt_lte_setup; then
+                persist_sms_gateway_target ncm
                 log "Huawei NCM LTE setup complete"
                 log "Check with: ifconfig $LTE_IFACE; netstat -rn"
                 return 0

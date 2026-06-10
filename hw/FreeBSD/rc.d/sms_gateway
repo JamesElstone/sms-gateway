@@ -1,0 +1,99 @@
+#!/bin/sh
+#
+# PROVIDE: sms_gateway
+# REQUIRE: devd
+# BEFORE: NETWORKING
+# KEYWORD: nojail
+#
+# Add the following lines to /etc/rc.conf to enable:
+#
+# sms_gateway_enable="YES"
+# sms_gateway_device_type="huawei-lte"
+# sms_gateway_target="hilink"
+#
+
+. /etc/rc.subr
+
+name="sms_gateway"
+rcvar="${name}_enable"
+
+load_rc_config "$name"
+
+: ${sms_gateway_enable:="NO"}
+: ${sms_gateway_root:="/usr/local/freebsd-sms-gateway"}
+: ${sms_gateway_platform:="$(uname -s)"}
+: ${sms_gateway_device_type:="huawei-lte"}
+: ${sms_gateway_target:="hilink"}
+: ${sms_gateway_start_delay:="8"}
+
+start_cmd="sms_gateway_start"
+status_cmd="sms_gateway_status"
+stop_cmd=":"
+extra_commands="status"
+
+sms_gateway_validate_token()
+{
+	local name value
+
+	name="$1"
+	value="$2"
+
+	case "$value" in
+	""|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*)
+		warn "${name} contains unsupported characters: ${value}"
+		return 1
+		;;
+	esac
+
+	return 0
+}
+
+sms_gateway_install_script()
+{
+	if ! sms_gateway_validate_token sms_gateway_platform "$sms_gateway_platform"; then
+		return 1
+	fi
+	if ! sms_gateway_validate_token sms_gateway_device_type "$sms_gateway_device_type"; then
+		return 1
+	fi
+
+	printf '%s/hw/%s/install-%s.sh\n' \
+		"$sms_gateway_root" "$sms_gateway_platform" "$sms_gateway_device_type"
+}
+
+sms_gateway_start()
+{
+	local script
+
+	if [ "$sms_gateway_start_delay" -gt 0 ] 2>/dev/null; then
+		sleep "$sms_gateway_start_delay"
+	fi
+
+	if ! sms_gateway_validate_token sms_gateway_target "$sms_gateway_target"; then
+		return 1
+	fi
+
+	script="$(sms_gateway_install_script)" || return 1
+	if [ ! -x "$script" ]; then
+		warn "missing executable install script: $script"
+		return 1
+	fi
+
+	echo "Starting ${name}: ${sms_gateway_device_type} target ${sms_gateway_target}."
+	"$script" --target "$sms_gateway_target"
+}
+
+sms_gateway_status()
+{
+	local script
+
+	script="$(sms_gateway_install_script)" || return 1
+	if [ ! -x "$script" ]; then
+		warn "missing executable install script: $script"
+		return 1
+	fi
+
+	"$script" --status
+}
+
+run_rc_command "$1"
