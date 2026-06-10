@@ -31,7 +31,7 @@ hw/FreeBSD/apache24/sms-gateway.conf
 Install it on Hydrogen as:
 
 ```sh
-sudo install -m 0644 /usr/local/www/sms-gateway/hw/FreeBSD/apache24/sms-gateway.conf /usr/local/etc/apache24/Includes/sms-gateway.conf
+sudo install -m 0644 /usr/local/sms-gateway/hw/FreeBSD/apache24/sms-gateway.conf /usr/local/etc/apache24/Includes/sms-gateway.conf
 sudo apachectl configtest
 sudo service apache24 reload
 ```

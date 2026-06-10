@@ -13,14 +13,14 @@ sudo pkg install -y apache24 php84 php84-curl php84-mbstring php84-xml mod_php84
 Copy this repository to:
 
 ```text
-/usr/local/www/sms-gateway
+/usr/local/sms-gateway
 ```
 
 Copy the config:
 
 ```sh
-cp /usr/local/www/sms-gateway/config/example.php /usr/local/www/sms-gateway/config/local.php
-cp /usr/local/www/sms-gateway/config/tokens.example.json /usr/local/www/sms-gateway/config/tokens.json
+cp /usr/local/sms-gateway/config/example.php /usr/local/sms-gateway/config/local.php
+cp /usr/local/sms-gateway/config/tokens.example.json /usr/local/sms-gateway/config/tokens.json
 ```
 
 Then adjust `config/local.php` if the LTE dongle is not at `http://192.168.8.1/`.
@@ -36,7 +36,7 @@ Install the FreeBSD apache24 include into Apache's standard Includes directory,
 then test and reload Apache:
 
 ```sh
-sudo install -m 0644 /usr/local/www/sms-gateway/hw/FreeBSD/apache24/sms-gateway.conf /usr/local/etc/apache24/Includes/sms-gateway.conf
+sudo install -m 0644 /usr/local/sms-gateway/hw/FreeBSD/apache24/sms-gateway.conf /usr/local/etc/apache24/Includes/sms-gateway.conf
 sudo apachectl configtest
 sudo service apache24 reload
 ```
@@ -53,9 +53,10 @@ It also reverse-proxies the LTE dongle web interface:
 http://hydrogen.int.elstone.net/lte-device/
 ```
 
-The `/lte-device/` route proxies to `http://192.168.8.1/`. The include loads the
-needed Apache proxy modules if they are not already loaded, so no
-`/usr/local/etc/apache24/httpd.conf` edit is required.
+The `/lte-device/` route proxies to `http://192.168.8.1/`. The include loads
+the Apache proxy modules it needs if they are not already loaded, and uses
+Hydrogen's existing `mod_rewrite`, so no `/usr/local/etc/apache24/httpd.conf`
+edit is required.
 
 ## LTE USB dongle mode
 
