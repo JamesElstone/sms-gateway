@@ -1974,7 +1974,7 @@ main() {
     fi
 
     require_root
-    : 2>/dev/null > "$LTE_LOG_FILE" || true
+    log_file "----- run start: target=$LTE_TARGET_MODE iface=$LTE_IFACE -----"
     require_command pkg
     require_command usbconfig
     require_command ifconfig
