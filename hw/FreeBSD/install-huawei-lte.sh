@@ -23,6 +23,9 @@ LTE_DEREGISTER_FIRST="${LTE_DEREGISTER_FIRST:-1}"
 LTE_SYSCFGEX_MODE="${LTE_SYSCFGEX_MODE:-03}"
 LTE_SYSCFGEX_BAND="${LTE_SYSCFGEX_BAND:-3FFFFFFF}"
 LTE_SYSCFGEX_LTE_BAND="${LTE_SYSCFGEX_LTE_BAND:-7FFFFFFFFFFFFFFF}"
+LTE_STORAGE_AT_RECOVERY="${LTE_STORAGE_AT_RECOVERY:-1}"
+LTE_STORAGE_SETPORT_VALUE="${LTE_STORAGE_SETPORT_VALUE:-A1,A2;10,12,13,16}"
+LTE_STORAGE_U2DIAG_VALUE="${LTE_STORAGE_U2DIAG_VALUE:-255}"
 LTE_LOG_FILE="${LTE_LOG_FILE:-/tmp/install-huawei-lte.log}"
 HUAWEI_VENDOR_ID="0x12d1"
 HUAWEI_STORAGE_PRODUCT_ID="0x1f01"
@@ -34,6 +37,11 @@ NETWORKING_CONFIGURED_IFACE=""
 RADIO_RESET_DONE=0
 PDP_CONTEXT_DONE=0
 RADIO_PROFILE_DONE=0
+
+if [ "$#" -gt 0 ]; then
+    LTE_TARGET_MODE="$1"
+    shift
+fi
 
 log() {
     printf '%s\n' "$*"
@@ -893,6 +901,10 @@ usb_product_is_hilink() {
     return 1
 }
 
+usb_product_is_storage() {
+    [ "$1" = "$HUAWEI_STORAGE_PRODUCT_ID" ]
+}
+
 read_huawei_usb_ids() {
     lte_dev="$1"
 
@@ -942,6 +954,110 @@ wait_for_huawei_hilink_after_usb_change() {
     if [ -n "$seen_id" ]; then
         log "Last Huawei USB ID seen while waiting for HiLink: $seen_id"
     fi
+    return 1
+}
+
+wait_for_huawei_storage_after_usb_change() {
+    n=0
+    seen_id=""
+
+    while [ "$n" -lt 20 ]; do
+        lte_dev="$(find_lte_device || true)"
+        if [ -n "$lte_dev" ] && read_huawei_usb_ids "$lte_dev"; then
+            seen_id="${mode_vendor}:${mode_product}"
+            if usb_product_is_storage "$mode_product"; then
+                return 0
+            fi
+        fi
+
+        n=$((n + 1))
+        sleep 1
+    done
+
+    if [ -n "$seen_id" ]; then
+        log "Last Huawei USB ID seen while waiting for storage mode: $seen_id"
+    fi
+    return 1
+}
+
+disable_usb_modeswitch_autoswitch() {
+    log "Disabling automatic usb_modeswitch so storage mode is not immediately consumed"
+    sysrc usb_modeswitch_enable=NO
+    service devd restart
+}
+
+reset_huawei_usb_device() {
+    product="$1"
+
+    log "Resetting Huawei USB device ${HUAWEI_VENDOR_ID}:${product}"
+    /usr/local/sbin/usb_modeswitch -v "$HUAWEI_VENDOR_ID" -p "$product" -R || true
+}
+
+try_huawei_storage_at_recovery() {
+    [ "$LTE_STORAGE_AT_RECOVERY" != "0" ] || return 1
+
+    ports="$(find_lte_serial_ports)"
+    if [ -z "$ports" ]; then
+        log "No /dev/cuaU* modem command ports found for storage-mode AT recovery"
+        return 1
+    fi
+
+    for port in $ports; do
+        log "Trying Huawei storage-mode AT recovery on $port"
+        stty -f "$port" 115200 cs8 -parenb -cstopb -echo >/dev/null 2>&1 || true
+
+        if ! query_at_port "$port" "AT"; then
+            log "Could not write AT probe to $port for storage-mode recovery"
+            continue
+        fi
+
+        query_at_port "$port" "ATE0" || true
+        query_at_port "$port" "AT+CMEE=2" || true
+        query_at_port "$port" "ATI" || true
+        query_at_port "$port" "AT^SETPORT?" || true
+
+        if query_at_port "$port" "AT^SETPORT=\"$LTE_STORAGE_SETPORT_VALUE\""; then
+            log "Huawei SETPORT storage composition was accepted on $port"
+            query_at_port "$port" "AT^RESET" || true
+            sleep 5
+            return 0
+        fi
+
+        if query_at_port "$port" "AT^U2DIAG=$LTE_STORAGE_U2DIAG_VALUE"; then
+            log "Huawei U2DIAG storage composition was accepted on $port"
+            query_at_port "$port" "AT^RESET" || true
+            sleep 5
+            return 0
+        fi
+    done
+
+    log "Huawei storage-mode AT recovery commands were not accepted"
+    return 1
+}
+
+prepare_huawei_storage_mode_from_ncm() {
+    disable_usb_modeswitch_autoswitch
+    try_huawei_storage_at_recovery || true
+    reset_huawei_usb_device "$HUAWEI_NCM_PRODUCT_ID"
+    sleep 5
+
+    if wait_for_huawei_storage_after_usb_change; then
+        log "Huawei dongle is now visible in storage mode (${mode_vendor}:${mode_product})"
+        return 0
+    fi
+
+    if wait_for_huawei_device_after_usb_change; then
+        if usb_product_is_hilink "$mode_product"; then
+            log "Huawei dongle entered HiLink mode while preparing storage (${mode_vendor}:${mode_product})"
+            return 0
+        fi
+
+        log "Huawei dongle is still ${mode_vendor}:${mode_product}"
+    else
+        log "Huawei device did not reappear after storage-mode preparation"
+    fi
+
+    log "Host is prepared to preserve storage mode; physically unplug/replug the dongle, then rerun"
     return 1
 }
 
@@ -996,27 +1112,22 @@ switch_huawei_hilink_device() {
     fi
 
     if [ "$mode_product" = "$HUAWEI_NCM_PRODUCT_ID" ]; then
-        log "Huawei dongle is in NCM/composite mode (${mode_vendor}:${mode_product}); trying USB reset before storage-mode switch"
-        /usr/local/sbin/usb_modeswitch -v 0x12d1 -p 0x155e -R || true
-        sleep 3
-
-        if ! wait_for_huawei_device_after_usb_change; then
-            log "Huawei device did not reappear after USB reset"
+        log "Huawei dongle is in NCM/composite mode (${mode_vendor}:${mode_product}); preparing storage-mode recovery"
+        if ! prepare_huawei_storage_mode_from_ncm; then
             return 1
         fi
 
         if usb_product_is_hilink "$mode_product"; then
-            log "Huawei dongle entered HiLink mode after USB reset (${mode_vendor}:${mode_product})"
             wait_for_lte_interface || true
             return 0
         fi
 
-        if [ "$mode_product" = "$HUAWEI_STORAGE_PRODUCT_ID" ]; then
+        if usb_product_is_storage "$mode_product"; then
             run_hilink_modeswitch_from_storage
             return "$?"
         fi
 
-        log "Huawei dongle stayed in ${mode_vendor}:${mode_product}; power-cycle/unplug dongle, then rerun"
+        log "Huawei dongle is still ${mode_vendor}:${mode_product}; cannot switch to HiLink from this mode"
         return 1
     fi
 
@@ -1260,6 +1371,52 @@ bring_lte_network_up() {
     return 1
 }
 
+attempt_storage_setup() {
+    log "Huawei storage-mode discovery"
+    log_lte_snapshot
+    disable_usb_modeswitch_autoswitch
+
+    lte_dev="$(find_lte_device || true)"
+    if [ -z "$lte_dev" ]; then
+        log "No Huawei USB device found"
+        return 1
+    fi
+
+    log "Found Huawei USB device at $lte_dev"
+    if ! read_huawei_usb_ids "$lte_dev"; then
+        return 1
+    fi
+
+    if [ "$mode_vendor" != "$HUAWEI_VENDOR_ID" ]; then
+        log "Device at $lte_dev is not Huawei vendor $HUAWEI_VENDOR_ID"
+        return 1
+    fi
+
+    if usb_product_is_storage "$mode_product"; then
+        log "Huawei dongle is in storage mode (${mode_vendor}:${mode_product})"
+        return 0
+    fi
+
+    if [ "$mode_product" = "$HUAWEI_NCM_PRODUCT_ID" ]; then
+        log "Huawei dongle is in NCM/composite mode (${mode_vendor}:${mode_product}); preparing host to catch storage mode"
+        if prepare_huawei_storage_mode_from_ncm && usb_product_is_storage "$mode_product"; then
+            return 0
+        fi
+
+        log "Huawei dongle is not yet in storage mode"
+        return 1
+    fi
+
+    if usb_product_is_hilink "$mode_product"; then
+        log "Huawei dongle is in HiLink mode (${mode_vendor}:${mode_product})"
+        log "Host is prepared to preserve storage mode; physically unplug/replug the dongle, then rerun"
+        return 1
+    fi
+
+    log "Huawei dongle is in unsupported mode ${mode_vendor}:${mode_product}; expected 1f01, 14db, 14dc, or 155e"
+    return 1
+}
+
 attempt_hilink_setup() {
     attempt=1
 
@@ -1335,6 +1492,14 @@ main() {
     ensure_usb_modeswitch_package
 
     case "$LTE_TARGET_MODE" in
+        storage)
+            if attempt_storage_setup; then
+                log "Huawei storage-mode setup complete"
+                log "Check with: usbconfig; usbconfig -d <ugenX.Y> dump_device_desc"
+                return 0
+            fi
+            die "Huawei storage mode is not ready"
+            ;;
         hilink)
             if attempt_hilink_setup; then
                 log "Huawei HiLink setup complete"
@@ -1352,7 +1517,7 @@ main() {
             die "$LTE_IFACE is not ready after $LTE_MAX_ATTEMPTS NCM discovery attempts"
             ;;
         *)
-            die "unsupported LTE_TARGET_MODE '$LTE_TARGET_MODE' (expected hilink or ncm)"
+            die "unsupported LTE_TARGET_MODE '$LTE_TARGET_MODE' (expected storage, hilink, or ncm)"
             ;;
     esac
 }
