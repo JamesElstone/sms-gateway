@@ -39,6 +39,7 @@ RADIO_RESET_DONE=0
 PDP_CONTEXT_DONE=0
 RADIO_PROFILE_DONE=0
 STATUS_ONLY=0
+STORAGE_REATTACH_REQUIRED=0
 
 log_file() {
     timestamp="$(date '+[%d/%m/%Y %H:%M]' 2>/dev/null || printf '[unknown time]')"
@@ -1569,6 +1570,7 @@ try_huawei_storage_at_recovery() {
 }
 
 log_storage_replug_instructions() {
+    STORAGE_REATTACH_REQUIRED=1
     log "Host is prepared to switch the dongle to storage mode on the next physical attach"
     log "Reboot hydrogen or physically unplug/replug the dongle, then run: ./install-huawei-lte.sh --status"
     log "Storage mode is confirmed when --status shows id = 12d1:1f01"
@@ -1983,13 +1985,13 @@ attempt_storage_setup() {
         fi
 
         log "Huawei dongle is not yet in storage mode"
-        return 1
+        return 0
     fi
 
     if usb_product_is_hilink "$mode_product"; then
         log "Huawei dongle is in HiLink mode (${mode_vendor}:${mode_product})"
         log_hilink_storage_replug_instructions
-        return 1
+        return 0
     fi
 
     log "Huawei dongle is in unsupported mode ${mode_vendor}:${mode_product}; expected 1f01, 14db, 14dc, or 155e"
@@ -2083,8 +2085,13 @@ main() {
     case "$LTE_TARGET_MODE" in
         storage)
             if attempt_storage_setup; then
-                log "Huawei storage-mode setup complete"
-                log "Check with: usbconfig; usbconfig -d <ugenX.Y> dump_device_desc"
+                if [ "$STORAGE_REATTACH_REQUIRED" -eq 1 ]; then
+                    log "Huawei storage-mode host preparation complete"
+                    log "Storage mode will be active after the next reboot or physical attach"
+                else
+                    log "Huawei storage-mode setup complete"
+                    log "Check with: usbconfig; usbconfig -d <ugenX.Y> dump_device_desc"
+                fi
                 return 0
             fi
             die "Huawei storage mode is not ready"
