@@ -54,9 +54,10 @@ http://hydrogen.int.elstone.net/lte-device/
 ```
 
 The `/lte-device/` route proxies to `http://192.168.8.1/`. The include loads
-the Apache proxy modules it needs if they are not already loaded, and uses
-Hydrogen's existing `mod_rewrite`, so no `/usr/local/etc/apache24/httpd.conf`
-edit is required.
+the Apache proxy/PHP modules it needs if they are not already loaded, binds
+`.php` files below `/sms-gateway` to the PHP handler, and uses Hydrogen's
+existing `mod_rewrite`, so no `/usr/local/etc/apache24/httpd.conf` edit is
+required.
 
 ## LTE USB dongle mode
 
