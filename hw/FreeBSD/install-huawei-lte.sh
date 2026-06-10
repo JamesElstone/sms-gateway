@@ -6,10 +6,12 @@ LTE_IFACE="${LTE_IFACE:-ue0}"
 LTE_APN="${LTE_APN:-}"
 LTE_AT_PORT="${LTE_AT_PORT:-}"
 LTE_MAX_ATTEMPTS="${LTE_MAX_ATTEMPTS:-1}"
-LTE_ENABLE_SERIAL_FALLBACK="${LTE_ENABLE_SERIAL_FALLBACK:-1}"
+LTE_ENABLE_SERIAL_FALLBACK="${LTE_ENABLE_SERIAL_FALLBACK:-0}"
+LTE_ENABLE_AT_STATUS="${LTE_ENABLE_AT_STATUS:-1}"
 LTE_AT_READ_TIMEOUT="${LTE_AT_READ_TIMEOUT:-1}"
 LTE_NDIS_INDEXES="${LTE_NDIS_INDEXES:-2}"
 LTE_REGISTRATION_WAIT="${LTE_REGISTRATION_WAIT:-30}"
+LTE_APN_CANDIDATES="${LTE_APN_CANDIDATES:-internet}"
 DHCPCONF="/etc/dhclient.conf"
 NETWORKING_CONFIGURED_IFACE=""
 
@@ -397,8 +399,10 @@ log_lte_snapshot() {
 }
 
 build_huawei_ndis_command() {
-    if [ -n "$LTE_APN" ]; then
-        printf 'AT^NDISDUP=1,1,"%s"\n' "$LTE_APN"
+    apn="$1"
+
+    if [ -n "$apn" ]; then
+        printf 'AT^NDISDUP=1,1,"%s"\n' "$apn"
     else
         printf '%s\n' "AT^NDISDUP=1,1"
     fi
@@ -549,7 +553,7 @@ send_huawei_serial_connect() {
         log "Set LTE_APN if the SIM requires a provider APN"
     fi
 
-    ndis_command="$(build_huawei_ndis_command)"
+    ndis_command="$(build_huawei_ndis_command "$LTE_APN")"
     sent=1
 
     for port in $ports; do
@@ -620,38 +624,49 @@ send_huawei_ndis_connect() {
     lte_dev="$1"
 
     if [ -n "$LTE_APN" ]; then
-        ndis_command="AT^NDISDUP=1,1,\"$LTE_APN\""
+        apn_list="$LTE_APN"
         log "Sending Huawei NDIS connect command using APN from LTE_APN"
     else
-        ndis_command="AT^NDISDUP=1,1"
-        log "Sending Huawei NDIS connect command without explicit APN"
+        apn_list="__none__ $LTE_APN_CANDIDATES"
+        log "Sending Huawei NDIS connect commands without APN, then APN candidates: $LTE_APN_CANDIDATES"
     fi
 
-    encoded="$(at_command_to_usb_bytes "$ndis_command")"
-    byte_args="$(printf '%s\n' "$encoded" | sed -n '1p')"
-    byte_count="$(printf '%s\n' "$encoded" | sed -n '2p')"
     tried=" "
     accepted=0
 
     ifconfig "$LTE_IFACE" up 2>/dev/null || true
 
-    for request_index in $LTE_NDIS_INDEXES; do
-        case "$tried" in
-            *" $request_index "*) continue ;;
-        esac
-        tried="$tried$request_index "
-
-        log "Trying NDIS connect control request on USB interface index $request_index"
-        # shellcheck disable=SC2086
-        if usbconfig -d "$lte_dev" -i 0 do_request 0x21 0 0 "$request_index" "$byte_count" $byte_args >/dev/null 2>&1; then
-            log "NDIS connect request accepted on USB interface index $request_index"
-            accepted=1
-            if wait_for_lte_carrier; then
-                log "$LTE_IFACE got carrier after NDIS connect on USB interface index $request_index"
-                return 0
-            fi
-            log "$LTE_IFACE still has status: $(lte_interface_status)"
+    for apn in $apn_list; do
+        if [ "$apn" = "__none__" ]; then
+            ndis_command="$(build_huawei_ndis_command "")"
+            ndis_label="without explicit APN"
+        else
+            ndis_command="$(build_huawei_ndis_command "$apn")"
+            ndis_label="with APN '$apn'"
         fi
+
+        encoded="$(at_command_to_usb_bytes "$ndis_command")"
+        byte_args="$(printf '%s\n' "$encoded" | sed -n '1p')"
+        byte_count="$(printf '%s\n' "$encoded" | sed -n '2p')"
+
+        for request_index in $LTE_NDIS_INDEXES; do
+            case "$tried" in
+                *" $request_index:$apn "*) continue ;;
+            esac
+            tried="$tried$request_index:$apn "
+
+            log "Trying NDIS connect control request on USB interface index $request_index $ndis_label"
+            # shellcheck disable=SC2086
+            if usbconfig -d "$lte_dev" -i 0 do_request 0x21 0 0 "$request_index" "$byte_count" $byte_args >/dev/null 2>&1; then
+                log "NDIS connect request accepted on USB interface index $request_index $ndis_label"
+                accepted=1
+                if wait_for_lte_carrier; then
+                    log "$LTE_IFACE got carrier after NDIS connect on USB interface index $request_index $ndis_label"
+                    return 0
+                fi
+                log "$LTE_IFACE still has status: $(lte_interface_status)"
+            fi
+        done
     done
 
     if [ "$accepted" -eq 1 ]; then
@@ -801,8 +816,11 @@ bring_lte_network_up() {
         sleep 1
         lte_dev="$(find_lte_device || true)"
 
-        if [ "$LTE_ENABLE_SERIAL_FALLBACK" != "0" ]; then
+        if [ "$LTE_ENABLE_AT_STATUS" != "0" ]; then
             log_huawei_at_status || true
+        fi
+
+        if [ "$LTE_ENABLE_SERIAL_FALLBACK" != "0" ]; then
             send_huawei_serial_connect || true
             sleep 1
             lte_dev="$(find_lte_device || true)"
