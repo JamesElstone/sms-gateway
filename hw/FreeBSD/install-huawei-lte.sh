@@ -39,7 +39,7 @@ RADIO_RESET_DONE=0
 PDP_CONTEXT_DONE=0
 RADIO_PROFILE_DONE=0
 STATUS_ONLY=0
-STORAGE_REATTACH_REQUIRED=0
+STORAGE_REBOOT_REQUIRED=0
 
 log_file() {
     timestamp="$(date '+[%d/%m/%Y %H:%M]' 2>/dev/null || printf '[unknown time]')"
@@ -69,7 +69,7 @@ Targets:
   hilink   Switch storage-mode Huawei dongles to HiLink 14db/14dc and test ue0.
            This is the default.
   storage  Disable automatic usb_modeswitch and switch/catch 12d1:1f01 storage mode.
-           If the dongle is already switched, reboot or reattach after running this.
+           If the dongle is already switched, reboot hydrogen after running this.
   ncm      Use the older NCM/serial attach path for 12d1:155e.
 
 Common options:
@@ -1569,17 +1569,16 @@ try_huawei_storage_at_recovery() {
     return 1
 }
 
-log_storage_replug_instructions() {
-    STORAGE_REATTACH_REQUIRED=1
-    log "Host is prepared to switch the dongle to storage mode on the next physical attach"
-    log "Reboot hydrogen or physically unplug/replug the dongle, then run: ./install-huawei-lte.sh --status"
+log_storage_reboot_instructions() {
+    STORAGE_REBOOT_REQUIRED=1
+    log "Host is prepared to keep the dongle in storage mode on the next hydrogen boot"
+    log "Reboot hydrogen, then run: ./install-huawei-lte.sh --status"
     log "Storage mode is confirmed when --status shows id = 12d1:1f01"
+    log "Physical reattach alone may come back as 12d1:14dc or 12d1:155e on this dongle"
 }
 
-log_hilink_storage_replug_instructions() {
-    log_storage_replug_instructions
-    log "If --status shows id = 12d1:155e after replug, run: sudo ./install-huawei-lte.sh --target storage"
-    log "That NCM/composite step prepares the dongle for one more physical unplug/replug"
+log_hilink_storage_reboot_instructions() {
+    log_storage_reboot_instructions
 }
 
 prepare_huawei_storage_mode_from_ncm() {
@@ -1604,7 +1603,7 @@ prepare_huawei_storage_mode_from_ncm() {
         log "Huawei device did not reappear after storage-mode preparation"
     fi
 
-    log_storage_replug_instructions
+    log_storage_reboot_instructions
     return 1
 }
 
@@ -1979,18 +1978,15 @@ attempt_storage_setup() {
     fi
 
     if [ "$mode_product" = "$HUAWEI_NCM_PRODUCT_ID" ]; then
-        log "Huawei dongle is in NCM/composite mode (${mode_vendor}:${mode_product}); preparing host to catch storage mode"
-        if prepare_huawei_storage_mode_from_ncm && usb_product_is_storage "$mode_product"; then
-            return 0
-        fi
-
-        log "Huawei dongle is not yet in storage mode"
+        log "Huawei dongle is in NCM/composite mode (${mode_vendor}:${mode_product})"
+        log "Storage mode cannot be switched in-place from NCM on this dongle"
+        log_storage_reboot_instructions
         return 0
     fi
 
     if usb_product_is_hilink "$mode_product"; then
         log "Huawei dongle is in HiLink mode (${mode_vendor}:${mode_product})"
-        log_hilink_storage_replug_instructions
+        log_hilink_storage_reboot_instructions
         return 0
     fi
 
@@ -2085,9 +2081,9 @@ main() {
     case "$LTE_TARGET_MODE" in
         storage)
             if attempt_storage_setup; then
-                if [ "$STORAGE_REATTACH_REQUIRED" -eq 1 ]; then
+                if [ "$STORAGE_REBOOT_REQUIRED" -eq 1 ]; then
                     log "Huawei storage-mode host preparation complete"
-                    log "Storage mode will be active after the next reboot or physical attach"
+                    log "Storage mode should be active after a full hydrogen reboot"
                 else
                     log "Huawei storage-mode setup complete"
                     log "Check with: usbconfig; usbconfig -d <ugenX.Y> dump_device_desc"
