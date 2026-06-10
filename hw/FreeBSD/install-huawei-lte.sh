@@ -38,11 +38,6 @@ RADIO_RESET_DONE=0
 PDP_CONTEXT_DONE=0
 RADIO_PROFILE_DONE=0
 
-if [ "$#" -gt 0 ]; then
-    LTE_TARGET_MODE="$1"
-    shift
-fi
-
 log() {
     printf '%s\n' "$*"
     printf '%s\n' "$*" >> "$LTE_LOG_FILE" 2>/dev/null || true
@@ -52,6 +47,327 @@ die() {
     printf 'ERROR: %s\n' "$*" >&2
     printf 'ERROR: %s\n' "$*" >> "$LTE_LOG_FILE" 2>/dev/null || true
     exit 1
+}
+
+usage() {
+    prog="${0##*/}"
+
+    cat <<EOF
+Usage:
+  $prog [--target storage|hilink|ncm] [options]
+  $prog storage|hilink|ncm [options]
+
+Targets:
+  hilink   Switch storage-mode Huawei dongles to HiLink 14db/14dc and test ue0.
+           This is the default.
+  storage  Disable automatic usb_modeswitch and preserve/catch 12d1:1f01 storage mode.
+  ncm      Use the older NCM/serial attach path for 12d1:155e.
+
+Common options:
+  -h, --help                       Show this help text.
+      --target MODE                Set target mode: storage, hilink, or ncm.
+      --iface IFACE                USB ethernet interface name. Default: $LTE_IFACE.
+      --max-attempts N             Discovery attempts. Default: $LTE_MAX_ATTEMPTS.
+      --log-file PATH              Log file. Default: $LTE_LOG_FILE.
+
+NCM/radio options:
+      --apn APN                    APN for NCM attach.
+      --apn-candidates LIST        Space-separated APN fallback list. Default: $LTE_APN_CANDIDATES.
+      --at-port PATH               Prefer a specific /dev/cuaU* AT command port.
+      --at-read-timeout SECONDS    AT read timeout. Default: $LTE_AT_READ_TIMEOUT.
+      --registration-wait SECONDS  Registration wait. Default: $LTE_REGISTRATION_WAIT.
+      --ndis-indexes LIST          USB interface indexes for NDIS control. Default: $LTE_NDIS_INDEXES.
+      --ndis-disconnect-first      Send NDIS disconnect before connect.
+      --no-ndis-disconnect-first   Skip NDIS disconnect before connect.
+      --enable-serial-fallback     Try serial AT NDIS fallback.
+      --disable-serial-fallback    Do not try serial AT NDIS fallback.
+      --enable-at-status           Log extended AT modem status.
+      --disable-at-status          Do not log extended AT modem status.
+      --operator-scan              Run AT+COPS=? operator scan.
+      --no-operator-scan           Do not run AT+COPS=? operator scan.
+      --operator-scan-timeout N    Operator scan timeout. Default: $LTE_OPERATOR_SCAN_TIMEOUT.
+      --radio-reset                Reset modem radio before NCM attach.
+      --no-radio-reset             Skip modem radio reset.
+      --post-radio-reset-wait N    Wait after radio reset. Default: $LTE_POST_RADIO_RESET_WAIT.
+      --pdp-context                Configure PDP context before NCM attach.
+      --no-pdp-context             Skip PDP context configuration.
+      --deregister-first           Deregister before automatic registration.
+      --no-deregister-first        Skip deregistration.
+      --syscfgex-mode MODE         Huawei SYSCFGEX mode. Default: $LTE_SYSCFGEX_MODE.
+      --syscfgex-band MASK         Huawei SYSCFGEX band mask. Default: $LTE_SYSCFGEX_BAND.
+      --syscfgex-lte-band MASK     Huawei SYSCFGEX LTE band mask. Default: $LTE_SYSCFGEX_LTE_BAND.
+
+Storage recovery options:
+      --storage-at-recovery        Try Huawei AT storage recovery commands.
+      --no-storage-at-recovery     Skip Huawei AT storage recovery commands.
+      --storage-setport VALUE      SETPORT value. Default: $LTE_STORAGE_SETPORT_VALUE.
+      --storage-u2diag VALUE       U2DIAG value. Default: $LTE_STORAGE_U2DIAG_VALUE.
+
+Environment:
+  LTE_* environment variables are still supported as defaults. Command-line
+  options override environment values.
+EOF
+}
+
+usage_error() {
+    printf 'ERROR: %s\n\n' "$*" >&2
+    usage >&2
+    exit 2
+}
+
+parse_args() {
+    cli_target_seen=0
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            --target)
+                [ "$#" -ge 2 ] || usage_error "missing value for --target"
+                LTE_TARGET_MODE="$2"
+                cli_target_seen=1
+                shift 2
+                ;;
+            --target=*)
+                LTE_TARGET_MODE="${1#--target=}"
+                cli_target_seen=1
+                shift
+                ;;
+            --iface)
+                [ "$#" -ge 2 ] || usage_error "missing value for --iface"
+                LTE_IFACE="$2"
+                shift 2
+                ;;
+            --iface=*)
+                LTE_IFACE="${1#--iface=}"
+                shift
+                ;;
+            --max-attempts)
+                [ "$#" -ge 2 ] || usage_error "missing value for --max-attempts"
+                LTE_MAX_ATTEMPTS="$2"
+                shift 2
+                ;;
+            --max-attempts=*)
+                LTE_MAX_ATTEMPTS="${1#--max-attempts=}"
+                shift
+                ;;
+            --log-file)
+                [ "$#" -ge 2 ] || usage_error "missing value for --log-file"
+                LTE_LOG_FILE="$2"
+                shift 2
+                ;;
+            --log-file=*)
+                LTE_LOG_FILE="${1#--log-file=}"
+                shift
+                ;;
+            --apn)
+                [ "$#" -ge 2 ] || usage_error "missing value for --apn"
+                LTE_APN="$2"
+                shift 2
+                ;;
+            --apn=*)
+                LTE_APN="${1#--apn=}"
+                shift
+                ;;
+            --apn-candidates)
+                [ "$#" -ge 2 ] || usage_error "missing value for --apn-candidates"
+                LTE_APN_CANDIDATES="$2"
+                shift 2
+                ;;
+            --apn-candidates=*)
+                LTE_APN_CANDIDATES="${1#--apn-candidates=}"
+                shift
+                ;;
+            --at-port)
+                [ "$#" -ge 2 ] || usage_error "missing value for --at-port"
+                LTE_AT_PORT="$2"
+                shift 2
+                ;;
+            --at-port=*)
+                LTE_AT_PORT="${1#--at-port=}"
+                shift
+                ;;
+            --at-read-timeout)
+                [ "$#" -ge 2 ] || usage_error "missing value for --at-read-timeout"
+                LTE_AT_READ_TIMEOUT="$2"
+                shift 2
+                ;;
+            --at-read-timeout=*)
+                LTE_AT_READ_TIMEOUT="${1#--at-read-timeout=}"
+                shift
+                ;;
+            --registration-wait)
+                [ "$#" -ge 2 ] || usage_error "missing value for --registration-wait"
+                LTE_REGISTRATION_WAIT="$2"
+                shift 2
+                ;;
+            --registration-wait=*)
+                LTE_REGISTRATION_WAIT="${1#--registration-wait=}"
+                shift
+                ;;
+            --ndis-indexes)
+                [ "$#" -ge 2 ] || usage_error "missing value for --ndis-indexes"
+                LTE_NDIS_INDEXES="$2"
+                shift 2
+                ;;
+            --ndis-indexes=*)
+                LTE_NDIS_INDEXES="${1#--ndis-indexes=}"
+                shift
+                ;;
+            --ndis-disconnect-first)
+                LTE_NDIS_DISCONNECT_FIRST=1
+                shift
+                ;;
+            --no-ndis-disconnect-first)
+                LTE_NDIS_DISCONNECT_FIRST=0
+                shift
+                ;;
+            --enable-serial-fallback)
+                LTE_ENABLE_SERIAL_FALLBACK=1
+                shift
+                ;;
+            --disable-serial-fallback)
+                LTE_ENABLE_SERIAL_FALLBACK=0
+                shift
+                ;;
+            --enable-at-status)
+                LTE_ENABLE_AT_STATUS=1
+                shift
+                ;;
+            --disable-at-status)
+                LTE_ENABLE_AT_STATUS=0
+                shift
+                ;;
+            --operator-scan)
+                LTE_OPERATOR_SCAN=1
+                shift
+                ;;
+            --no-operator-scan)
+                LTE_OPERATOR_SCAN=0
+                shift
+                ;;
+            --operator-scan-timeout)
+                [ "$#" -ge 2 ] || usage_error "missing value for --operator-scan-timeout"
+                LTE_OPERATOR_SCAN_TIMEOUT="$2"
+                shift 2
+                ;;
+            --operator-scan-timeout=*)
+                LTE_OPERATOR_SCAN_TIMEOUT="${1#--operator-scan-timeout=}"
+                shift
+                ;;
+            --radio-reset)
+                LTE_RADIO_RESET_FIRST=1
+                shift
+                ;;
+            --no-radio-reset)
+                LTE_RADIO_RESET_FIRST=0
+                shift
+                ;;
+            --post-radio-reset-wait)
+                [ "$#" -ge 2 ] || usage_error "missing value for --post-radio-reset-wait"
+                LTE_POST_RADIO_RESET_WAIT="$2"
+                shift 2
+                ;;
+            --post-radio-reset-wait=*)
+                LTE_POST_RADIO_RESET_WAIT="${1#--post-radio-reset-wait=}"
+                shift
+                ;;
+            --pdp-context)
+                LTE_CONFIGURE_PDP_CONTEXT=1
+                shift
+                ;;
+            --no-pdp-context)
+                LTE_CONFIGURE_PDP_CONTEXT=0
+                shift
+                ;;
+            --deregister-first)
+                LTE_DEREGISTER_FIRST=1
+                shift
+                ;;
+            --no-deregister-first)
+                LTE_DEREGISTER_FIRST=0
+                shift
+                ;;
+            --syscfgex-mode)
+                [ "$#" -ge 2 ] || usage_error "missing value for --syscfgex-mode"
+                LTE_SYSCFGEX_MODE="$2"
+                shift 2
+                ;;
+            --syscfgex-mode=*)
+                LTE_SYSCFGEX_MODE="${1#--syscfgex-mode=}"
+                shift
+                ;;
+            --syscfgex-band)
+                [ "$#" -ge 2 ] || usage_error "missing value for --syscfgex-band"
+                LTE_SYSCFGEX_BAND="$2"
+                shift 2
+                ;;
+            --syscfgex-band=*)
+                LTE_SYSCFGEX_BAND="${1#--syscfgex-band=}"
+                shift
+                ;;
+            --syscfgex-lte-band)
+                [ "$#" -ge 2 ] || usage_error "missing value for --syscfgex-lte-band"
+                LTE_SYSCFGEX_LTE_BAND="$2"
+                shift 2
+                ;;
+            --syscfgex-lte-band=*)
+                LTE_SYSCFGEX_LTE_BAND="${1#--syscfgex-lte-band=}"
+                shift
+                ;;
+            --storage-at-recovery)
+                LTE_STORAGE_AT_RECOVERY=1
+                shift
+                ;;
+            --no-storage-at-recovery)
+                LTE_STORAGE_AT_RECOVERY=0
+                shift
+                ;;
+            --storage-setport)
+                [ "$#" -ge 2 ] || usage_error "missing value for --storage-setport"
+                LTE_STORAGE_SETPORT_VALUE="$2"
+                shift 2
+                ;;
+            --storage-setport=*)
+                LTE_STORAGE_SETPORT_VALUE="${1#--storage-setport=}"
+                shift
+                ;;
+            --storage-u2diag)
+                [ "$#" -ge 2 ] || usage_error "missing value for --storage-u2diag"
+                LTE_STORAGE_U2DIAG_VALUE="$2"
+                shift 2
+                ;;
+            --storage-u2diag=*)
+                LTE_STORAGE_U2DIAG_VALUE="${1#--storage-u2diag=}"
+                shift
+                ;;
+            storage|hilink|ncm)
+                [ "$cli_target_seen" -eq 0 ] || usage_error "target specified more than once"
+                LTE_TARGET_MODE="$1"
+                cli_target_seen=1
+                shift
+                ;;
+            --)
+                shift
+                [ "$#" -eq 0 ] || usage_error "unexpected argument after --: $1"
+                ;;
+            -*)
+                usage_error "unknown option: $1"
+                ;;
+            *)
+                usage_error "unexpected argument: $1"
+                ;;
+        esac
+    done
+
+    case "$LTE_TARGET_MODE" in
+        storage|hilink|ncm) ;;
+        *)
+            usage_error "unsupported target: $LTE_TARGET_MODE (expected storage, hilink, or ncm)"
+            ;;
+    esac
 }
 
 require_root() {
@@ -1477,6 +1793,8 @@ attempt_lte_setup() {
 }
 
 main() {
+    parse_args "$@"
+
     : > "$LTE_LOG_FILE" 2>/dev/null || true
     require_root
     require_command pkg
