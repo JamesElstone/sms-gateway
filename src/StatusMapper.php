@@ -91,16 +91,39 @@ final class StatusMapper
     /** @param array<string, mixed> $health */
     public static function fromHealth(array $health): ?Status
     {
-        $simState = strtolower((string) ($health['pin_status']['SimState'] ?? $health['pin_status']['simstate'] ?? ''));
-        $pinStatus = strtolower((string) ($health['pin_status']['SimStatus'] ?? $health['pin_status']['simstatus'] ?? ''));
+        $pinState = (string) ($health['pin_status']['SimState'] ?? $health['pin_status']['simstate'] ?? '');
+        $simState = strtolower($pinState);
+        $pinStatus = strtolower((string) ($health['monitoring_status']['SimStatus'] ?? $health['pin_status']['SimStatus'] ?? $health['pin_status']['simstatus'] ?? ''));
 
-        if (str_contains($simState, 'nosim') || str_contains($pinStatus, 'nosim')) {
+        if ($pinState === '255' || $pinStatus === '255' || str_contains($simState, 'nosim') || str_contains($pinStatus, 'nosim')) {
             return new Status('sim_card_missing', 503, 'SIM card is missing or not detected');
         }
 
+        if ($pinState === '260') {
+            return new Status('sim_pin_required', 503, 'SIM PIN is required before SMS can be sent');
+        }
+
+        if ($pinState === '261') {
+            return new Status('sim_puk_required', 503, 'SIM PUK is required before SMS can be sent');
+        }
+
         $connectionStatus = (string) ($health['monitoring_status']['ConnectionStatus'] ?? '');
-        if (in_array($connectionStatus, ['901', '902', '903', '904'], true)) {
-            return new Status('data_plan_expired', 402, 'LTE data plan or network connection appears unavailable');
+        if ($connectionStatus === '201') {
+            return new Status('data_plan_expired', 402, 'LTE traffic limit appears to be exceeded');
+        }
+
+        if (in_array($connectionStatus, ['900', '903'], true)) {
+            return new Status('lte_status', 503, 'LTE device connection state is changing');
+        }
+
+        if (in_array($connectionStatus, ['904', '905'], true)) {
+            return new Status('connection_failed', 503, 'LTE device connection failed');
+        }
+
+        $workMode = strtolower((string) ($health['device_information']['workmode'] ?? $health['device_information']['WorkMode'] ?? ''));
+        $serviceStatus = (string) ($health['monitoring_status']['ServiceStatus'] ?? '');
+        if (str_contains($workMode, 'no service') || ($serviceStatus !== '' && $serviceStatus !== '2')) {
+            return new Status('no_service', 503, 'LTE device has no mobile network service');
         }
 
         return null;
@@ -139,6 +162,7 @@ final class StatusMapper
             ?? self::stringOrNull($plmn['ShortName'] ?? null)
             ?? self::stringOrNull($plmn['Numeric'] ?? null);
         $networkLabel = $networkTypeEx['label'] !== 'unknown' ? $networkTypeEx['label'] : $networkType['label'];
+        $sendBlocker = self::fromHealth($health);
 
         $status = self::overallStatus($connection['label'], $simState['label'], $serviceStatus['label'], $workMode);
         $message = self::statusMessage(
@@ -167,7 +191,8 @@ final class StatusMapper
                 $signalStrength,
                 self::stringOrNull($signal['rssi'] ?? null),
                 self::flag($dataSwitch['dataswitch'] ?? null)['enabled'],
-                self::flag($moduleSwitch['sms_enabled'] ?? null)['enabled']
+                self::flag($moduleSwitch['sms_enabled'] ?? null)['enabled'],
+                $sendBlocker
             ),
             'status' => $status,
             'message' => $message,
@@ -355,7 +380,8 @@ final class StatusMapper
         ?int $signalStrength,
         ?string $rssi,
         ?bool $mobileDataEnabled,
-        ?bool $smsEnabled
+        ?bool $smsEnabled,
+        ?Status $sendBlocker
     ): array {
         $connected = $connection === 'connected';
         $signalQuality = self::signalQuality($signalIcon, $maxSignal, $signalStrength);
@@ -371,6 +397,12 @@ final class StatusMapper
             'connected' => $connected,
             'mobile_data_enabled' => $mobileDataEnabled,
             'sms_available' => $smsEnabled,
+            'sms_send' => [
+                'blocked' => $sendBlocker !== null,
+                'status' => $sendBlocker?->status ?? 'ready',
+                'http_status' => $sendBlocker?->httpStatus,
+                'message' => $sendBlocker?->message ?? 'SMS send pre-flight checks passed',
+            ],
             'sim' => [
                 'state' => $simState,
                 'status' => $simStatus,

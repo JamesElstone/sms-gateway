@@ -23,6 +23,12 @@ Example:
     "message": "E3372 reachable; SIM pin_ready; modem reports no service; signal 0/5",
     "connection": "disconnected",
     "connected": false,
+    "sms_send": {
+      "blocked": true,
+      "status": "no_service",
+      "http_status": 503,
+      "message": "LTE device has no mobile network service"
+    },
     "signal": {
       "quality": "bad",
       "label": "No signal",
