@@ -101,6 +101,21 @@ if ($response->statusCode !== 200 || ($response->payload['count'] ?? null) !== 9
     fwrite(STDERR, "Carrier scan fresh cache response failed\n");
     exit(1);
 }
+
+$lock = fopen($lockPath, 'c');
+if ($lock === false || !flock($lock, LOCK_EX | LOCK_NB)) {
+    fwrite(STDERR, "Carrier scan force lock setup failed\n");
+    exit(1);
+}
+
+$response = $app->handle('GET', '/sms-gateway/carriers/', '', [], '127.0.0.1', ['force' => '']);
+flock($lock, LOCK_UN);
+fclose($lock);
+
+if ($response->statusCode !== 409 || ($response->payload['status'] ?? null) !== 'scan_in_progress') {
+    fwrite(STDERR, "Carrier scan force lock response failed\n");
+    exit(1);
+}
 @unlink($cachePath);
 
 $lock = fopen($lockPath, 'c');

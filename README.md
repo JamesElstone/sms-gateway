@@ -84,6 +84,15 @@ If no cached scan exists yet, concurrent requests return HTTP 409:
 }
 ```
 
+Use `?force` to bypass a fresh cache and start a new scan:
+
+```text
+GET http://hydrogen/sms-gateway/carriers/?force
+```
+
+Forced scans still use the same scan lock. If a scan is already running, a
+forced request returns HTTP 409 immediately and does not return cached data.
+
 Example:
 
 ```json

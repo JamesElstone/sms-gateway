@@ -16,15 +16,25 @@ final class App
     {
     }
 
-    /** @param array<string, string> $headers */
-    public function handle(string $method, string $path, string $body, array $headers = [], string $clientIp = ''): Response
+    /**
+     * @param array<string, string> $headers
+     * @param array<string, mixed> $query
+     */
+    public function handle(
+        string $method,
+        string $path,
+        string $body,
+        array $headers = [],
+        string $clientIp = '',
+        array $query = []
+    ): Response
     {
         if ($method === 'GET' && preg_match('#^/sms-gateway/?$#', $path) === 1) {
             return $this->handleStatus();
         }
 
         if ($method === 'GET' && preg_match('#^/sms-gateway/carriers/?$#', $path) === 1) {
-            return $this->handleCarriers();
+            return $this->handleCarriers(array_key_exists('force', $query));
         }
 
         if ($method !== 'POST') {
@@ -116,19 +126,23 @@ final class App
         }
     }
 
-    private function handleCarriers(): Response
+    private function handleCarriers(bool $force = false): Response
     {
         try {
-            $cached = $this->readCarrierScanCache(false);
-            if ($cached !== null) {
-                return Response::json(200, $cached);
+            if (!$force) {
+                $cached = $this->readCarrierScanCache(false);
+                if ($cached !== null) {
+                    return Response::json(200, $cached);
+                }
             }
 
             $lock = $this->acquireCarrierScanLock();
             if ($lock === null) {
-                $cached = $this->readCarrierScanCache(true);
-                if ($cached !== null) {
-                    return Response::json(200, $cached);
+                if (!$force) {
+                    $cached = $this->readCarrierScanCache(true);
+                    if ($cached !== null) {
+                        return Response::json(200, $cached);
+                    }
                 }
 
                 return Response::json(409, [

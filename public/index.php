@@ -21,12 +21,20 @@ foreach (['HTTP_AUTHORIZATION' => 'Authorization', 'HTTP_X_SMS_GATEWAY_TOKEN' =>
     }
 }
 
+$requestUri = $_SERVER['REQUEST_URI'] ?? '/';
+$query = [];
+$queryString = parse_url($requestUri, PHP_URL_QUERY);
+if (is_string($queryString)) {
+    parse_str($queryString, $query);
+}
+
 $response = $app->handle(
     $_SERVER['REQUEST_METHOD'] ?? 'GET',
-    parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/',
+    parse_url($requestUri, PHP_URL_PATH) ?: '/',
     file_get_contents('php://input') ?: '',
     $headers,
-    $_SERVER['REMOTE_ADDR'] ?? ''
+    $_SERVER['REMOTE_ADDR'] ?? '',
+    $query
 );
 
 JsonResponse::send($response);
