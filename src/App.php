@@ -23,6 +23,10 @@ final class App
             return $this->handleStatus();
         }
 
+        if ($method === 'GET' && preg_match('#^/sms-gateway/carriers/?$#', $path) === 1) {
+            return $this->handleCarriers();
+        }
+
         if ($method !== 'POST') {
             return Response::json(405, ['status' => 'unable_to_send', 'message' => 'Only POST is supported']);
         }
@@ -112,13 +116,47 @@ final class App
         }
     }
 
-    private function modemClient(): LteModemClient
+    private function handleCarriers(): Response
+    {
+        try {
+            $search = $this->modemClient($this->config->carrierScanTimeoutSeconds())->searchCarriers();
+
+            return Response::json(200, CarrierMapper::fromSearch($search));
+        } catch (LteTransportException $exception) {
+            return Response::json(503, [
+                'status' => 'device_missing',
+                'message' => $exception->getMessage(),
+            ]);
+        } catch (LteApiException $exception) {
+            if ($exception->getLteCode() === 100004) {
+                return Response::json(503, [
+                    'status' => 'device_busy',
+                    'message' => 'LTE device is busy; carrier scan could not complete',
+                    'lte_error_code' => $exception->getLteCode(),
+                ]);
+            }
+
+            $status = StatusMapper::fromLteApiException($exception);
+            return Response::json($status->httpStatus, [
+                'status' => $status->status,
+                'message' => $status->message,
+                'lte_error_code' => $exception->getLteCode(),
+            ]);
+        } catch (\Throwable $exception) {
+            return Response::json(502, [
+                'status' => 'lte_error',
+                'message' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    private function modemClient(?int $timeoutSeconds = null): LteModemClient
     {
         return new LteModemClient(
             $this->config->dongleUrl(),
             $this->config->dongleUsername(),
             $this->config->donglePassword(),
-            $this->config->curlTimeoutSeconds()
+            $timeoutSeconds ?? $this->config->curlTimeoutSeconds()
         );
     }
 }

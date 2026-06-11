@@ -7,6 +7,13 @@ namespace SmsGateway\Lte;
 final class LteModemClient
 {
     /** @var list<string> */
+    private const AJAX_HEADERS = [
+        'X-Requested-With: XMLHttpRequest',
+        'Pragma: no-cache',
+        'Cache-Control: no-cache',
+    ];
+
+    /** @var list<string> */
     private array $tokens = [];
     private ?string $sessionCookie = null;
     private readonly string $cookieFile;
@@ -77,6 +84,27 @@ final class LteModemClient
             'Reserved' => 1,
             'Date' => gmdate('Y-m-d H:i:s'),
         ]);
+    }
+
+    /** @return array<string, mixed> */
+    public function searchCarriers(): array
+    {
+        $this->initializeSession();
+
+        $netMode = $this->get('net/net-mode', self::AJAX_HEADERS);
+        $netModePayload = $this->networkModePayload($netMode);
+        $netModeApply = $this->post(
+            'net/net-mode',
+            $netModePayload,
+            self::AJAX_HEADERS,
+            'Content-Type: application/x-www-form-urlencoded; charset=UTF-8'
+        );
+
+        return [
+            'net_mode' => is_array($netMode) ? $netMode : ['value' => $netMode],
+            'net_mode_apply' => $netModeApply,
+            'plmn_list' => $this->get('net/plmn-list', self::AJAX_HEADERS),
+        ];
     }
 
     private function initializeSession(): void
@@ -156,35 +184,42 @@ final class LteModemClient
         }
     }
 
-    private function get(string $endpoint): mixed
+    /** @param list<string> $headers */
+    private function get(string $endpoint, array $headers = []): mixed
     {
-        return $this->getRelative('api/' . ltrim($endpoint, '/'));
+        return $this->getRelative('api/' . ltrim($endpoint, '/'), $headers);
     }
 
-    private function getRelative(string $path): mixed
+    /** @param list<string> $headers */
+    private function getRelative(string $path, array $headers = []): mixed
     {
-        $headers = [];
+        $requestHeaders = $headers;
         if ($this->tokens !== []) {
-            $headers[] = '__RequestVerificationToken: ' . $this->tokens[0];
+            $requestHeaders[] = '__RequestVerificationToken: ' . $this->tokens[0];
         }
 
-        $response = $this->request('GET', $this->relativeUrl($path), null, $headers);
+        $response = $this->request('GET', $this->relativeUrl($path), null, $requestHeaders);
         $this->captureTokensFromHeaders($response['headers']);
         return $this->decodeDeviceResponse($response['body']);
     }
 
     /** @param array<string, mixed>|null $payload */
-    private function post(string $endpoint, ?array $payload): mixed
+    private function post(
+        string $endpoint,
+        ?array $payload,
+        array $headers = [],
+        string $contentType = 'Content-Type: application/xml'
+    ): mixed
     {
         $attempts = 0;
         while (true) {
             $attempts++;
-            $headers = ['Content-Type: application/xml'];
+            $requestHeaders = array_merge([$contentType], $headers);
             if ($this->tokens !== []) {
-                $headers[] = '__RequestVerificationToken: ' . (count($this->tokens) > 1 ? array_shift($this->tokens) : $this->tokens[0]);
+                $requestHeaders[] = '__RequestVerificationToken: ' . (count($this->tokens) > 1 ? array_shift($this->tokens) : $this->tokens[0]);
             }
 
-            $response = $this->request('POST', $this->apiUrl($endpoint), $payload === null ? '' : $this->requestXml($payload), $headers);
+            $response = $this->request('POST', $this->apiUrl($endpoint), $payload === null ? '' : $this->requestXml($payload), $requestHeaders);
             $this->captureTokensFromHeaders($response['headers']);
 
             try {
@@ -208,6 +243,34 @@ final class LteModemClient
     private function relativeUrl(string $path): string
     {
         return rtrim($this->baseUrl, '/') . '/' . ltrim($path, '/');
+    }
+
+    /** @return array{NetworkMode: string, NetworkBand: string, LTEBand: string} */
+    private function networkModePayload(mixed $netMode): array
+    {
+        $values = is_array($netMode) ? $netMode : [];
+
+        return [
+            'NetworkMode' => $this->networkModeValue($values['NetworkMode'] ?? null),
+            'NetworkBand' => $this->nonEmptyString($values['NetworkBand'] ?? null, '3FFFFFFF'),
+            'LTEBand' => $this->nonEmptyString($values['LTEBand'] ?? null, '7FFFFFFFFFFFFFFF'),
+        ];
+    }
+
+    private function networkModeValue(mixed $value): string
+    {
+        $mode = $this->nonEmptyString($value, '03');
+        return preg_match('/^[0-9]$/', $mode) === 1 ? '0' . $mode : $mode;
+    }
+
+    private function nonEmptyString(mixed $value, string $default): string
+    {
+        if ($value === null || is_array($value)) {
+            return $default;
+        }
+
+        $string = trim((string) $value);
+        return $string === '' ? $default : $string;
     }
 
     /** @param list<string> $headers */

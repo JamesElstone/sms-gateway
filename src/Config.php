@@ -33,6 +33,14 @@ final class Config
         return max(1, (int) ($this->values['curl_timeout_seconds'] ?? 10));
     }
 
+    public function carrierScanTimeoutSeconds(): int
+    {
+        return max(
+            $this->curlTimeoutSeconds(),
+            (int) ($this->values['carrier_scan_timeout_seconds'] ?? 240)
+        );
+    }
+
     public function maxMessageBytes(): int
     {
         return max(1, (int) ($this->values['max_message_bytes'] ?? 1600));

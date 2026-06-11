@@ -64,6 +64,53 @@ Example:
 ```
 
 ```text
+GET http://hydrogen/sms-gateway/carriers/
+```
+
+Runs the Huawei network operator search and returns the available PLMNs as JSON.
+The dongle may take around a minute to complete this scan.
+
+Example:
+
+```json
+{
+  "status": "carrier_scan_complete",
+  "message": "Carrier scan completed; 6 carriers found; per-carrier signal was not reported by the modem",
+  "count": 6,
+  "signal_reported": false,
+  "carriers": [
+    {
+      "index": 0,
+      "name": "O2 - UK",
+      "full_name": "O2 - UK",
+      "short_name": "O2 - UK",
+      "numeric": "23410",
+      "state": {
+        "code": "1",
+        "label": "usable"
+      },
+      "available": true,
+      "registered": false,
+      "forbidden": false,
+      "rat": {
+        "code": "7",
+        "label": "4G/LTE"
+      },
+      "signal": {
+        "reported": false,
+        "rssi": null,
+        "rsrp": null,
+        "rsrq": null,
+        "sinr": null,
+        "strength": null,
+        "icon": null
+      }
+    }
+  ]
+}
+```
+
+```text
 POST http://hydrogen.int.elstone.net/sms-gateway/send/{mobile-number}
 Content-Type: text/plain
 X-SMS-Gateway-Token: {token}
