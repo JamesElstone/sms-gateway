@@ -348,23 +348,25 @@ final class LteModemClient
             return [];
         }
 
-        $xml = @simplexml_load_string($body, 'SimpleXMLElement', LIBXML_NOCDATA);
-        if ($xml === false) {
+        $document = new \DOMDocument();
+        if (@$document->loadXML($body, LIBXML_NOCDATA) === false || $document->documentElement === null) {
             throw new LteTransportException('LTE device returned non-XML response');
         }
 
-        $rootName = $xml->getName();
+        $root = $document->documentElement;
+        $rootName = $root->tagName;
         if ($rootName === 'error') {
-            $code = isset($xml->code) ? (int) $xml->code : null;
-            $message = trim((string) ($xml->message ?? '')) ?: $this->messageForErrorCode($code);
+            $error = $this->domElementToArray($root);
+            $code = isset($error['code']) ? (int) $error['code'] : null;
+            $message = trim((string) ($error['message'] ?? '')) ?: $this->messageForErrorCode($code);
             throw new LteApiException($code === null ? $message : $code . ': ' . $message, $code);
         }
 
-        if ($rootName === 'response' && count($xml->children()) === 0) {
-            return (string) $xml;
+        if ($rootName === 'response' && !$this->hasElementChildren($root)) {
+            return trim($root->textContent);
         }
 
-        return $this->simpleXmlToArray($xml);
+        return $this->domElementToArray($root);
     }
 
     private function messageForErrorCode(?int $code): string
@@ -380,17 +382,32 @@ final class LteModemClient
         };
     }
 
-    /** @return array<string, mixed>|string */
-    private function simpleXmlToArray(\SimpleXMLElement $xml): array|string
+    private function hasElementChildren(\DOMElement $element): bool
     {
-        if (count($xml->children()) === 0) {
-            return (string) $xml;
+        foreach ($element->childNodes as $child) {
+            if ($child->nodeType === XML_ELEMENT_NODE) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @return array<string, mixed>|string */
+    private function domElementToArray(\DOMElement $element): array|string
+    {
+        if (!$this->hasElementChildren($element)) {
+            return trim($element->textContent);
         }
 
         $result = [];
-        foreach ($xml->children() as $child) {
-            $name = $child->getName();
-            $value = $this->simpleXmlToArray($child);
+        foreach ($element->childNodes as $child) {
+            if (!$child instanceof \DOMElement) {
+                continue;
+            }
+
+            $name = $child->tagName;
+            $value = $this->domElementToArray($child);
 
             if (!array_key_exists($name, $result)) {
                 $result[$name] = $value;
