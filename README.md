@@ -6,6 +6,32 @@ XML web API, normally at `http://192.168.8.1/`.
 ## API
 
 ```text
+GET http://hydrogen.int.elstone.net/sms-gateway/
+```
+
+Returns decoded LTE dongle status JSON, including an interpreted summary and
+raw decoded read-only Huawei API responses from `http://192.168.8.1/`.
+
+Example:
+
+```json
+{
+  "status": "no_service",
+  "message": "E3372 reachable; SIM pin_ready; modem reports no service; signal 0/5",
+  "device": {
+    "name": "E3372",
+    "imei": "866785032862038"
+  },
+  "network": {
+    "connection": {
+      "code": "902",
+      "label": "disconnected"
+    }
+  }
+}
+```
+
+```text
 POST http://hydrogen.int.elstone.net/sms-gateway/send/{mobile-number}
 Content-Type: text/plain
 X-SMS-Gateway-Token: {token}
@@ -31,6 +57,15 @@ Known statuses include:
 - `lte_error`
 - `device_missing`
 - `sim_card_missing`
+- `sim_pin_required`
+- `sim_puk_required`
+- `no_service`
+- `connected`
+- `connecting`
+- `disconnecting`
+- `disconnected`
+- `connection_failed`
+- `lte_status`
 - `data_plan_expired`
 
 The token may also be sent as:

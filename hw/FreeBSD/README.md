@@ -39,6 +39,7 @@ sudo service apache24 reload
 After installation, the expected routes are:
 
 ```text
+http://hydrogen.int.elstone.net/sms-gateway/
 http://hydrogen.int.elstone.net/sms-gateway/send/{mobile-number}
 http://hydrogen.int.elstone.net/lte-device/
 ```
