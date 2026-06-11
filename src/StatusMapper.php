@@ -133,6 +133,12 @@ final class StatusMapper
         $workMode = self::stringOrNull($device['workmode'] ?? $device['WorkMode'] ?? null);
         $signalIcon = self::intOrNull($monitoring['SignalIcon'] ?? null);
         $maxSignal = self::intOrNull($monitoring['maxsignal'] ?? null);
+        $signalStrength = self::intOrNull($monitoring['SignalStrength'] ?? null);
+        $wanIpAddress = self::stringOrNull($device['WanIPAddress'] ?? null);
+        $operatorName = self::stringOrNull($plmn['FullName'] ?? null)
+            ?? self::stringOrNull($plmn['ShortName'] ?? null)
+            ?? self::stringOrNull($plmn['Numeric'] ?? null);
+        $networkLabel = $networkTypeEx['label'] !== 'unknown' ? $networkTypeEx['label'] : $networkType['label'];
 
         $status = self::overallStatus($connection['label'], $simState['label'], $serviceStatus['label'], $workMode);
         $message = self::statusMessage(
@@ -140,12 +146,29 @@ final class StatusMapper
             $status,
             $simState['label'],
             $connection['label'],
-            $networkTypeEx['label'] !== 'unknown' ? $networkTypeEx['label'] : $networkType['label'],
+            $networkLabel,
             $signalIcon,
             $maxSignal
         );
 
         return [
+            'general' => self::generalStatus(
+                $status,
+                $message,
+                $connection['label'],
+                $simState['label'],
+                $simStatus['label'],
+                $serviceStatus['label'],
+                $networkLabel,
+                $operatorName,
+                $wanIpAddress,
+                $signalIcon,
+                $maxSignal,
+                $signalStrength,
+                self::stringOrNull($signal['rssi'] ?? null),
+                self::flag($dataSwitch['dataswitch'] ?? null)['enabled'],
+                self::flag($moduleSwitch['sms_enabled'] ?? null)['enabled']
+            ),
             'status' => $status,
             'message' => $message,
             'device' => [
@@ -158,7 +181,7 @@ final class StatusMapper
                 'software_version' => self::stringOrNull($device['SoftwareVersion'] ?? $basic['SoftwareVersion'] ?? null),
                 'web_ui_version' => self::stringOrNull($device['WebUIVersion'] ?? $basic['WebUIVersion'] ?? null),
                 'lan_mac_address' => self::stringOrNull($device['MacAddress1'] ?? null),
-                'wan_ip_address' => self::stringOrNull($device['WanIPAddress'] ?? null),
+                'wan_ip_address' => $wanIpAddress,
                 'wan_ipv6_address' => self::stringOrNull($device['WanIPv6Address'] ?? null),
                 'product_family' => self::stringOrNull($device['ProductFamily'] ?? $basic['productfamily'] ?? null),
                 'classify' => self::stringOrNull($device['Classify'] ?? $basic['classify'] ?? null),
@@ -209,7 +232,7 @@ final class StatusMapper
             ],
             'signal' => [
                 'icon' => $signalIcon,
-                'strength' => self::intOrNull($monitoring['SignalStrength'] ?? null),
+                'strength' => $signalStrength,
                 'max' => $maxSignal,
                 'pci' => self::stringOrNull($signal['pci'] ?? null),
                 'cell_id' => self::stringOrNull($signal['cell_id'] ?? null),
@@ -315,6 +338,186 @@ final class StatusMapper
             'value' => $string,
             'enabled' => $string === null ? null : $string === '1',
         ];
+    }
+
+    private static function generalStatus(
+        string $status,
+        string $message,
+        string $connection,
+        string $simState,
+        string $simStatus,
+        string $service,
+        string $networkType,
+        ?string $operatorName,
+        ?string $wanIpAddress,
+        ?int $signalIcon,
+        ?int $maxSignal,
+        ?int $signalStrength,
+        ?string $rssi,
+        ?bool $mobileDataEnabled,
+        ?bool $smsEnabled
+    ): array {
+        $connected = $connection === 'connected';
+        $signalQuality = self::signalQuality($signalIcon, $maxSignal, $signalStrength);
+        $rssiStatus = self::rssiStatus($rssi);
+        $problems = self::statusProblems($status, $connection, $service, $signalQuality['quality'], $operatorName, $wanIpAddress);
+
+        return [
+            'status' => $status,
+            'health' => self::healthLabel($status, $problems),
+            'ok' => $status === 'connected' && $problems === [],
+            'message' => $message,
+            'connection' => $connected ? 'connected' : $connection,
+            'connected' => $connected,
+            'mobile_data_enabled' => $mobileDataEnabled,
+            'sms_available' => $smsEnabled,
+            'sim' => [
+                'state' => $simState,
+                'status' => $simStatus,
+                'ok' => in_array($simState, ['pin_ready', 'pin_disabled'], true)
+                    && $simStatus === 'usim_available',
+            ],
+            'network' => [
+                'service' => $service,
+                'type' => $networkType === 'unknown' ? null : $networkType,
+                'operator' => $operatorName,
+                'wan_ip_address' => $wanIpAddress,
+            ],
+            'signal' => [
+                'quality' => $signalQuality['quality'],
+                'label' => $signalQuality['label'],
+                'icon' => $signalIcon,
+                'max' => $maxSignal,
+                'strength' => $signalStrength,
+                'percent' => $signalQuality['percent'],
+            ],
+            'rssi' => $rssiStatus,
+            'problems' => $problems,
+        ];
+    }
+
+    /** @return array{quality: string, label: string, percent: ?int} */
+    private static function signalQuality(?int $signalIcon, ?int $maxSignal, ?int $signalStrength): array
+    {
+        $percent = null;
+        if ($signalIcon !== null && $maxSignal !== null && $maxSignal > 0) {
+            $percent = (int) round(max(0, min($signalIcon, $maxSignal)) / $maxSignal * 100);
+        } elseif ($signalStrength !== null) {
+            $percent = max(0, min($signalStrength, 100));
+        }
+
+        $quality = match (true) {
+            $percent === null => 'unknown',
+            $percent <= 0 => 'bad',
+            $percent < 40 => 'low',
+            $percent < 70 => 'ok',
+            default => 'good',
+        };
+
+        return [
+            'quality' => $quality,
+            'label' => match ($quality) {
+                'good' => 'Good signal',
+                'ok' => 'Usable signal',
+                'low' => 'Low signal',
+                'bad' => 'No signal',
+                default => 'Signal not reported',
+            },
+            'percent' => $percent,
+        ];
+    }
+
+    /** @return array{value: ?int, unit: string, quality: string, label: string} */
+    private static function rssiStatus(?string $rssi): array
+    {
+        if ($rssi === null || preg_match('/-?[0-9]+/', $rssi, $match) !== 1) {
+            return [
+                'value' => null,
+                'unit' => 'dBm',
+                'quality' => 'not_reported',
+                'label' => 'RSSI not reported by modem',
+            ];
+        }
+
+        $value = (int) $match[0];
+        $quality = match (true) {
+            $value >= -85 => 'good',
+            $value >= -100 => 'low',
+            default => 'bad',
+        };
+
+        return [
+            'value' => $value,
+            'unit' => 'dBm',
+            'quality' => $quality,
+            'label' => match ($quality) {
+                'good' => 'Good RSSI',
+                'low' => 'Low RSSI',
+                default => 'Bad RSSI',
+            },
+        ];
+    }
+
+    /** @return list<string> */
+    private static function statusProblems(
+        string $status,
+        string $connection,
+        string $service,
+        string $signalQuality,
+        ?string $operatorName,
+        ?string $wanIpAddress
+    ): array {
+        $problems = [];
+
+        if (in_array($status, ['sim_card_missing', 'sim_pin_required', 'sim_puk_required'], true)) {
+            $problems[] = match ($status) {
+                'sim_card_missing' => 'SIM card is missing or not detected',
+                'sim_pin_required' => 'SIM PIN is required',
+                default => 'SIM PUK is required',
+            };
+        }
+
+        if ($service !== 'available') {
+            $problems[] = 'Mobile network service is unavailable or limited';
+        }
+
+        if (!in_array($connection, ['connected', 'connecting'], true)) {
+            $problems[] = 'Data connection is not connected';
+        }
+
+        if ($signalQuality === 'bad') {
+            $problems[] = 'No usable radio signal is reported';
+        } elseif ($signalQuality === 'low') {
+            $problems[] = 'Radio signal is low';
+        }
+
+        if ($operatorName === null) {
+            $problems[] = 'No mobile operator/PLMN is reported';
+        }
+
+        if ($wanIpAddress === null) {
+            $problems[] = 'No WAN IP address is assigned';
+        }
+
+        return array_values(array_unique($problems));
+    }
+
+    /** @param list<string> $problems */
+    private static function healthLabel(string $status, array $problems): string
+    {
+        if ($status === 'connected' && $problems === []) {
+            return 'good';
+        }
+
+        if (in_array($status, ['connecting', 'disconnecting'], true)) {
+            return 'changing';
+        }
+
+        if ($problems !== []) {
+            return 'bad';
+        }
+
+        return 'warning';
     }
 
     private static function stringOrNull(mixed $value): ?string

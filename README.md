@@ -16,6 +16,32 @@ Example:
 
 ```json
 {
+  "general": {
+    "status": "no_service",
+    "health": "bad",
+    "ok": false,
+    "message": "E3372 reachable; SIM pin_ready; modem reports no service; signal 0/5",
+    "connection": "disconnected",
+    "connected": false,
+    "signal": {
+      "quality": "bad",
+      "label": "No signal",
+      "percent": 0
+    },
+    "rssi": {
+      "value": null,
+      "unit": "dBm",
+      "quality": "not_reported",
+      "label": "RSSI not reported by modem"
+    },
+    "problems": [
+      "Mobile network service is unavailable or limited",
+      "Data connection is not connected",
+      "No usable radio signal is reported",
+      "No mobile operator/PLMN is reported",
+      "No WAN IP address is assigned"
+    ]
+  },
   "status": "no_service",
   "message": "E3372 reachable; SIM pin_ready; modem reports no service; signal 0/5",
   "device": {
