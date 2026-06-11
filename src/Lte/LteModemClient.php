@@ -8,6 +8,7 @@ final class LteModemClient
 {
     /** @var list<string> */
     private array $tokens = [];
+    private ?string $sessionCookie = null;
     private readonly string $cookieFile;
 
     public function __construct(
@@ -36,10 +37,29 @@ final class LteModemClient
         $this->initializeSession();
 
         return [
+            'basic_information' => $this->safeGet('device/basic_information'),
             'device_information' => $this->safeGet('device/information'),
             'pin_status' => $this->safeGet('pin/status'),
             'monitoring_status' => $this->safeGet('monitoring/status'),
             'signal' => $this->safeGet('device/signal'),
+            'converged_status' => $this->safeGet('monitoring/converged-status'),
+            'sms_count' => $this->safeGet('sms/sms-count'),
+            'notifications' => $this->safeGet('monitoring/check-notifications'),
+            'module_switch' => $this->safeGet('global/module-switch'),
+            'mobile_dataswitch' => $this->safeGet('dialup/mobile-dataswitch'),
+            'dialup_connection' => $this->safeGet('dialup/connection'),
+            'current_plmn' => $this->safeGet('net/current-plmn'),
+            'traffic_statistics' => $this->safeGet('monitoring/traffic-statistics'),
+            'online_update_configuration' => $this->safeGet('online-update/configuration'),
+            'online_update_autoupdate_config' => $this->safeGet('online-update/autoupdate-config'),
+            'online_update_upgrade_messagebox' => $this->safeGet('online-update/upgrade-messagebox'),
+            'autorun_version' => $this->safeGet('device/autorun-version'),
+            'user_state_login' => $this->safeGet('user/state-login'),
+            'config' => [
+                'global' => $this->safeGetRelative('config/global/config.xml'),
+                'network_types' => $this->safeGetRelative('config/global/net-type.xml'),
+                'device_information' => $this->safeGetRelative('config/deviceinformation/config.xml'),
+            ],
         ];
     }
 
@@ -62,6 +82,35 @@ final class LteModemClient
     private function initializeSession(): void
     {
         $this->tokens = [];
+        $this->sessionCookie = null;
+
+        try {
+            $response = $this->request('GET', $this->apiUrl('webserver/SesTokInfo'));
+            $session = $this->decodeDeviceResponse($response['body']);
+            if (is_array($session)) {
+                $this->captureSessionInfo($session);
+                if (isset($session['TokInfo']) && $session['TokInfo'] !== '') {
+                    $this->tokens[] = (string) $session['TokInfo'];
+                }
+            }
+
+            if ($this->sessionCookie !== null && $this->tokens !== []) {
+                return;
+            }
+        } catch (\Throwable) {
+        }
+
+        try {
+            $response = $this->request('GET', $this->relativeUrl('html/smsinbox.html'));
+            if (preg_match_all('/name="csrf_token"\s+content="([^"]+)"/i', $response['body'], $matches)) {
+                $this->tokens = array_values($matches[1]);
+            }
+
+            if ($this->tokens !== []) {
+                return;
+            }
+        } catch (\Throwable) {
+        }
 
         $response = $this->request('GET', $this->baseUrl);
         if (preg_match_all('/name="csrf_token"\s+content="([^"]+)"/i', $response['body'], $matches)) {
@@ -96,14 +145,31 @@ final class LteModemClient
         }
     }
 
+    /** @return array<string, mixed> */
+    private function safeGetRelative(string $path): array
+    {
+        try {
+            $response = $this->getRelative($path);
+            return is_array($response) ? $response : ['value' => $response];
+        } catch (\Throwable $exception) {
+            return ['error' => $exception->getMessage()];
+        }
+    }
+
     private function get(string $endpoint): mixed
     {
+        return $this->getRelative('api/' . ltrim($endpoint, '/'));
+    }
+
+    private function getRelative(string $path): mixed
+    {
         $headers = [];
-        if (count($this->tokens) === 1) {
+        if ($this->tokens !== []) {
             $headers[] = '__RequestVerificationToken: ' . $this->tokens[0];
         }
 
-        $response = $this->request('GET', $this->apiUrl($endpoint), null, $headers);
+        $response = $this->request('GET', $this->relativeUrl($path), null, $headers);
+        $this->captureTokensFromHeaders($response['headers']);
         return $this->decodeDeviceResponse($response['body']);
     }
 
@@ -136,7 +202,12 @@ final class LteModemClient
 
     private function apiUrl(string $endpoint): string
     {
-        return rtrim($this->baseUrl, '/') . '/api/' . ltrim($endpoint, '/');
+        return $this->relativeUrl('api/' . ltrim($endpoint, '/'));
+    }
+
+    private function relativeUrl(string $path): string
+    {
+        return rtrim($this->baseUrl, '/') . '/' . ltrim($path, '/');
     }
 
     /** @param list<string> $headers */
@@ -148,6 +219,10 @@ final class LteModemClient
         }
 
         $responseHeaders = [];
+        if ($this->sessionCookie !== null && !$this->hasHeader($headers, 'Cookie')) {
+            $headers[] = 'Cookie: ' . $this->sessionCookie;
+        }
+
         curl_setopt_array($curl, [
             CURLOPT_CUSTOMREQUEST => $method,
             CURLOPT_RETURNTRANSFER => true,
@@ -156,6 +231,7 @@ final class LteModemClient
             CURLOPT_TIMEOUT => $this->timeoutSeconds,
             CURLOPT_COOKIEJAR => $this->cookieFile,
             CURLOPT_COOKIEFILE => $this->cookieFile,
+            CURLOPT_ENCODING => '',
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_HEADERFUNCTION => static function ($curl, string $header) use (&$responseHeaders): int {
                 $responseHeaders[] = trim($header);
@@ -185,7 +261,39 @@ final class LteModemClient
             throw new LteTransportException('LTE device returned HTTP ' . $statusCode);
         }
 
+        $this->captureSessionCookieFromHeaders($responseHeaders);
+
         return ['body' => (string) $responseBody, 'headers' => $responseHeaders];
+    }
+
+    /** @param list<string> $headers */
+    private function hasHeader(array $headers, string $name): bool
+    {
+        foreach ($headers as $header) {
+            if (str_starts_with(strtolower($header), strtolower($name) . ':')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @param array<string, mixed> $session */
+    private function captureSessionInfo(array $session): void
+    {
+        if (isset($session['SesInfo']) && is_string($session['SesInfo']) && $session['SesInfo'] !== '') {
+            $this->sessionCookie = $session['SesInfo'];
+        }
+    }
+
+    /** @param list<string> $headers */
+    private function captureSessionCookieFromHeaders(array $headers): void
+    {
+        foreach ($headers as $header) {
+            if (preg_match('/^Set-Cookie:\s*(SessionID=[^;]+)/i', $header, $match)) {
+                $this->sessionCookie = trim($match[1]);
+            }
+        }
     }
 
     /** @param list<string> $headers */
@@ -235,7 +343,7 @@ final class LteModemClient
 
     private function decodeDeviceResponse(string $body): mixed
     {
-        $body = trim($body);
+        $body = preg_replace('/^\xEF\xBB\xBF/', '', trim($body)) ?? trim($body);
         if ($body === '') {
             return [];
         }
@@ -275,8 +383,27 @@ final class LteModemClient
     /** @return array<string, mixed>|string */
     private function simpleXmlToArray(\SimpleXMLElement $xml): array|string
     {
-        $json = json_encode($xml, JSON_THROW_ON_ERROR);
-        $decoded = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
-        return is_array($decoded) ? $decoded : (string) $xml;
+        if (count($xml->children()) === 0) {
+            return (string) $xml;
+        }
+
+        $result = [];
+        foreach ($xml->children() as $child) {
+            $name = $child->getName();
+            $value = $this->simpleXmlToArray($child);
+
+            if (!array_key_exists($name, $result)) {
+                $result[$name] = $value;
+                continue;
+            }
+
+            if (!is_array($result[$name]) || !array_is_list($result[$name])) {
+                $result[$name] = [$result[$name]];
+            }
+
+            $result[$name][] = $value;
+        }
+
+        return $result;
     }
 }
