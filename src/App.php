@@ -119,7 +119,19 @@ final class App
     private function handleCarriers(): Response
     {
         try {
-            $search = $this->modemClient($this->config->carrierScanTimeoutSeconds())->searchCarriers();
+            $lock = $this->acquireCarrierScanLock();
+            if ($lock === null) {
+                return Response::json(409, [
+                    'status' => 'scan_in_progress',
+                    'message' => 'A carrier scan is already in progress; try again shortly',
+                ]);
+            }
+
+            try {
+                $search = $this->modemClient($this->config->carrierScanTimeoutSeconds())->searchCarriers();
+            } finally {
+                $this->releaseCarrierScanLock($lock);
+            }
 
             return Response::json(200, CarrierMapper::fromSearch($search));
         } catch (LteTransportException $exception) {
@@ -148,6 +160,32 @@ final class App
                 'message' => $exception->getMessage(),
             ]);
         }
+    }
+
+    /** @return resource|null */
+    private function acquireCarrierScanLock()
+    {
+        $handle = @fopen(sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sms-gateway-carrier-scan.lock', 'c');
+        if ($handle === false) {
+            throw new \RuntimeException('Unable to create carrier scan lock');
+        }
+
+        if (!flock($handle, LOCK_EX | LOCK_NB)) {
+            fclose($handle);
+            return null;
+        }
+
+        ftruncate($handle, 0);
+        fwrite($handle, 'pid=' . getmypid() . ' started=' . gmdate(DATE_ATOM) . PHP_EOL);
+
+        return $handle;
+    }
+
+    /** @param resource $handle */
+    private function releaseCarrierScanLock($handle): void
+    {
+        flock($handle, LOCK_UN);
+        fclose($handle);
     }
 
     private function modemClient(?int $timeoutSeconds = null): LteModemClient

@@ -70,4 +70,25 @@ if (($carrierSummary['carriers'][1]['forbidden'] ?? null) !== true) {
     exit(1);
 }
 
+$lockPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sms-gateway-carrier-scan.lock';
+$lock = fopen($lockPath, 'c');
+if ($lock === false || !flock($lock, LOCK_EX | LOCK_NB)) {
+    fwrite(STDERR, "Carrier scan lock setup failed\n");
+    exit(1);
+}
+
+$app = new SmsGateway\App(new SmsGateway\Config([
+    'dongle_url' => 'http://127.0.0.1:9/',
+    'curl_timeout_seconds' => 1,
+    'carrier_scan_timeout_seconds' => 1,
+]));
+$response = $app->handle('GET', '/sms-gateway/carriers/', '', [], '127.0.0.1');
+flock($lock, LOCK_UN);
+fclose($lock);
+
+if ($response->statusCode !== 409 || ($response->payload['status'] ?? null) !== 'scan_in_progress') {
+    fwrite(STDERR, "Carrier scan lock response failed\n");
+    exit(1);
+}
+
 exit(0);

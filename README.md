@@ -69,6 +69,14 @@ GET http://hydrogen/sms-gateway/carriers/
 
 Runs the Huawei network operator search and returns the available PLMNs as JSON.
 The dongle may take around a minute to complete this scan.
+Only one scan is allowed at a time; concurrent requests return HTTP 409:
+
+```json
+{
+  "status": "scan_in_progress",
+  "message": "A carrier scan is already in progress; try again shortly"
+}
+```
 
 Example:
 
