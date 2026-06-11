@@ -73,8 +73,10 @@ if (($carrierSummary['carriers'][1]['forbidden'] ?? null) !== true) {
 $testPrefix = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sms-gateway-test-' . getmypid();
 $lockPath = $testPrefix . '.lock';
 $cachePath = $testPrefix . '.cache.json';
+$forceStatePath = $testPrefix . '.force.json';
 @unlink($lockPath);
 @unlink($cachePath);
+@unlink($forceStatePath);
 
 $app = new SmsGateway\App(new SmsGateway\Config([
     'dongle_url' => 'http://127.0.0.1:9/',
@@ -82,6 +84,7 @@ $app = new SmsGateway\App(new SmsGateway\Config([
     'carrier_scan_timeout_seconds' => 1,
     'carrier_scan_lock_file' => $lockPath,
     'carrier_scan_cache_file' => $cachePath,
+    'carrier_scan_force_state_file' => $forceStatePath,
 ]));
 
 file_put_contents($cachePath, json_encode([
@@ -101,6 +104,18 @@ if ($response->statusCode !== 200 || ($response->payload['count'] ?? null) !== 9
     fwrite(STDERR, "Carrier scan fresh cache response failed\n");
     exit(1);
 }
+
+file_put_contents($forceStatePath, json_encode([
+    'status' => 'recently_completed',
+    'updated_at_epoch' => time(),
+    'busy_until_epoch' => time() + 60,
+]));
+$response = $app->handle('GET', '/sms-gateway/carriers/', '', [], '127.0.0.1', ['force' => '']);
+if ($response->statusCode !== 409 || ($response->payload['status'] ?? null) !== 'scan_in_progress') {
+    fwrite(STDERR, "Carrier scan force suppression response failed\n");
+    exit(1);
+}
+@unlink($forceStatePath);
 
 $lock = fopen($lockPath, 'c');
 if ($lock === false || !flock($lock, LOCK_EX | LOCK_NB)) {
@@ -156,6 +171,7 @@ flock($lock, LOCK_UN);
 fclose($lock);
 @unlink($lockPath);
 @unlink($cachePath);
+@unlink($forceStatePath);
 
 if ($response->statusCode !== 200 || ($response->payload['count'] ?? null) !== 42) {
     fwrite(STDERR, "Carrier scan stale cache during lock response failed\n");

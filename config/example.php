@@ -7,6 +7,7 @@ return [
     'curl_timeout_seconds' => (int) (getenv('SMS_GATEWAY_CURL_TIMEOUT') ?: 10),
     'carrier_scan_timeout_seconds' => (int) (getenv('SMS_GATEWAY_CARRIER_SCAN_TIMEOUT') ?: 240),
     'carrier_scan_cache_ttl_seconds' => (int) (getenv('SMS_GATEWAY_CARRIER_SCAN_CACHE_TTL') ?: 900),
+    'carrier_scan_force_suppression_seconds' => (int) (getenv('SMS_GATEWAY_CARRIER_SCAN_FORCE_SUPPRESSION') ?: 60),
     'max_message_bytes' => (int) (getenv('SMS_GATEWAY_MAX_MESSAGE_BYTES') ?: 1600),
     'token_file' => getenv('SMS_GATEWAY_TOKEN_FILE') ?: dirname(__DIR__) . '/config/tokens.json',
 ];

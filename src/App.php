@@ -129,6 +129,10 @@ final class App
     private function handleCarriers(bool $force = false): Response
     {
         try {
+            if ($force && $this->isCarrierScanForceSuppressed()) {
+                return $this->carrierScanInProgressResponse();
+            }
+
             if (!$force) {
                 $cached = $this->readCarrierScanCache(false);
                 if ($cached !== null) {
@@ -145,17 +149,19 @@ final class App
                     }
                 }
 
-                return Response::json(409, [
-                    'status' => 'scan_in_progress',
-                    'message' => 'A carrier scan is already in progress; try again shortly',
-                ]);
+                return $this->carrierScanInProgressResponse();
             }
 
             try {
+                $this->writeCarrierScanForceState('running', time() + $this->config->carrierScanTimeoutSeconds());
                 $search = $this->modemClient($this->config->carrierScanTimeoutSeconds())->searchCarriers();
                 $summary = CarrierMapper::fromSearch($search);
                 $this->writeCarrierScanCache($summary);
             } finally {
+                $this->writeCarrierScanForceState(
+                    'recently_completed',
+                    time() + $this->config->carrierScanForceSuppressionSeconds()
+                );
                 $this->releaseCarrierScanLock($lock);
             }
 
@@ -186,6 +192,14 @@ final class App
                 'message' => $exception->getMessage(),
             ]);
         }
+    }
+
+    private function carrierScanInProgressResponse(): Response
+    {
+        return Response::json(409, [
+            'status' => 'scan_in_progress',
+            'message' => 'A carrier scan is already in progress; try again shortly',
+        ]);
     }
 
     /** @return resource|null */
@@ -251,6 +265,50 @@ final class App
             'payload' => $payload,
         ];
         $json = json_encode($cache, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        if ($json === false) {
+            return;
+        }
+
+        $tmpPath = $path . '.' . getmypid() . '.tmp';
+        if (@file_put_contents($tmpPath, $json, LOCK_EX) === false) {
+            return;
+        }
+
+        if (@rename($tmpPath, $path)) {
+            return;
+        }
+
+        @unlink($path);
+        if (!@rename($tmpPath, $path)) {
+            @unlink($tmpPath);
+        }
+    }
+
+    private function isCarrierScanForceSuppressed(): bool
+    {
+        $json = @file_get_contents($this->config->carrierScanForceStateFile());
+        if ($json === false || $json === '') {
+            return false;
+        }
+
+        $state = json_decode($json, true);
+        if (!is_array($state)) {
+            return false;
+        }
+
+        $busyUntil = $state['busy_until_epoch'] ?? null;
+        return is_int($busyUntil) && $busyUntil > time();
+    }
+
+    private function writeCarrierScanForceState(string $status, int $busyUntil): void
+    {
+        $path = $this->config->carrierScanForceStateFile();
+        $state = [
+            'status' => $status,
+            'updated_at_epoch' => time(),
+            'busy_until_epoch' => $busyUntil,
+        ];
+        $json = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
         if ($json === false) {
             return;
         }

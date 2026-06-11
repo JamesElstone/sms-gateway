@@ -46,6 +46,11 @@ final class Config
         return max(1, (int) ($this->values['carrier_scan_cache_ttl_seconds'] ?? 900));
     }
 
+    public function carrierScanForceSuppressionSeconds(): int
+    {
+        return max(1, (int) ($this->values['carrier_scan_force_suppression_seconds'] ?? 60));
+    }
+
     public function carrierScanLockFile(): string
     {
         return (string) (
@@ -59,6 +64,14 @@ final class Config
         return (string) (
             $this->values['carrier_scan_cache_file']
             ?? sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sms-gateway-carrier-scan-cache.json'
+        );
+    }
+
+    public function carrierScanForceStateFile(): string
+    {
+        return (string) (
+            $this->values['carrier_scan_force_state_file']
+            ?? sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sms-gateway-carrier-scan-force.json'
         );
     }
 

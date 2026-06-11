@@ -92,6 +92,9 @@ GET http://hydrogen/sms-gateway/carriers/?force
 
 Forced scans still use the same scan lock. If a scan is already running, a
 forced request returns HTTP 409 immediately and does not return cached data.
+After any real scan completes, forced requests are also suppressed for 60
+seconds so browser/server-queued duplicate force requests cannot start a second
+scan as soon as the first lock is released.
 
 Example:
 
