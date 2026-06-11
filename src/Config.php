@@ -41,6 +41,27 @@ final class Config
         );
     }
 
+    public function carrierScanCacheTtlSeconds(): int
+    {
+        return max(1, (int) ($this->values['carrier_scan_cache_ttl_seconds'] ?? 900));
+    }
+
+    public function carrierScanLockFile(): string
+    {
+        return (string) (
+            $this->values['carrier_scan_lock_file']
+            ?? sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sms-gateway-carrier-scan.lock'
+        );
+    }
+
+    public function carrierScanCacheFile(): string
+    {
+        return (string) (
+            $this->values['carrier_scan_cache_file']
+            ?? sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sms-gateway-carrier-scan-cache.json'
+        );
+    }
+
     public function maxMessageBytes(): int
     {
         return max(1, (int) ($this->values['max_message_bytes'] ?? 1600));

@@ -69,7 +69,13 @@ GET http://hydrogen/sms-gateway/carriers/
 
 Runs the Huawei network operator search and returns the available PLMNs as JSON.
 The dongle may take around a minute to complete this scan.
-Only one scan is allowed at a time; concurrent requests return HTTP 409:
+Successful scan responses are cached for 15 minutes in the system temporary
+directory. Requests during that cache window return the cached scan response
+instead of starting another modem scan.
+
+Only one scan is allowed at a time. If another request arrives while a scan is
+running, the endpoint returns the cached scan response, even if it has expired.
+If no cached scan exists yet, concurrent requests return HTTP 409:
 
 ```json
 {

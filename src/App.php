@@ -119,8 +119,18 @@ final class App
     private function handleCarriers(): Response
     {
         try {
+            $cached = $this->readCarrierScanCache(false);
+            if ($cached !== null) {
+                return Response::json(200, $cached);
+            }
+
             $lock = $this->acquireCarrierScanLock();
             if ($lock === null) {
+                $cached = $this->readCarrierScanCache(true);
+                if ($cached !== null) {
+                    return Response::json(200, $cached);
+                }
+
                 return Response::json(409, [
                     'status' => 'scan_in_progress',
                     'message' => 'A carrier scan is already in progress; try again shortly',
@@ -129,11 +139,13 @@ final class App
 
             try {
                 $search = $this->modemClient($this->config->carrierScanTimeoutSeconds())->searchCarriers();
+                $summary = CarrierMapper::fromSearch($search);
+                $this->writeCarrierScanCache($summary);
             } finally {
                 $this->releaseCarrierScanLock($lock);
             }
 
-            return Response::json(200, CarrierMapper::fromSearch($search));
+            return Response::json(200, $summary);
         } catch (LteTransportException $exception) {
             return Response::json(503, [
                 'status' => 'device_missing',
@@ -165,7 +177,7 @@ final class App
     /** @return resource|null */
     private function acquireCarrierScanLock()
     {
-        $handle = @fopen(sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sms-gateway-carrier-scan.lock', 'c');
+        $handle = @fopen($this->config->carrierScanLockFile(), 'c');
         if ($handle === false) {
             throw new \RuntimeException('Unable to create carrier scan lock');
         }
@@ -186,6 +198,62 @@ final class App
     {
         flock($handle, LOCK_UN);
         fclose($handle);
+    }
+
+    /** @return array<string, mixed>|null */
+    private function readCarrierScanCache(bool $allowExpired): ?array
+    {
+        $json = @file_get_contents($this->config->carrierScanCacheFile());
+        if ($json === false || $json === '') {
+            return null;
+        }
+
+        $cache = json_decode($json, true);
+        if (!is_array($cache)) {
+            return null;
+        }
+
+        $payload = $cache['payload'] ?? null;
+        $expiresAt = $cache['expires_at_epoch'] ?? null;
+        if (!is_array($payload) || !is_int($expiresAt)) {
+            return null;
+        }
+
+        if (!$allowExpired && $expiresAt <= time()) {
+            return null;
+        }
+
+        return $payload;
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function writeCarrierScanCache(array $payload): void
+    {
+        $path = $this->config->carrierScanCacheFile();
+        $now = time();
+        $cache = [
+            'created_at_epoch' => $now,
+            'expires_at_epoch' => $now + $this->config->carrierScanCacheTtlSeconds(),
+            'payload' => $payload,
+        ];
+        $json = json_encode($cache, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        if ($json === false) {
+            return;
+        }
+
+        $tmpPath = $path . '.' . getmypid() . '.tmp';
+        if (@file_put_contents($tmpPath, $json, LOCK_EX) === false) {
+            return;
+        }
+
+        if (@rename($tmpPath, $path)) {
+            return;
+        }
+
+        @unlink($path);
+        if (!@rename($tmpPath, $path)) {
+            @unlink($tmpPath);
+        }
     }
 
     private function modemClient(?int $timeoutSeconds = null): LteModemClient
