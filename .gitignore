@@ -8,5 +8,8 @@
 /config/local.php
 /config/tokens.json
 /config/tokens.json.*.tmp
-/data/*.sqlite3
-/data/*.sqlite3-*
+/data/
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
