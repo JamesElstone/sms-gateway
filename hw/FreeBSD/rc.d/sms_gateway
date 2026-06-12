@@ -15,6 +15,9 @@
 
 . /etc/rc.subr
 
+PATH="/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin"
+export PATH
+
 name="sms_gateway"
 rcvar="${name}_enable"
 
