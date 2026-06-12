@@ -9,11 +9,11 @@ import urllib.request
 def main() -> int:
     if len(sys.argv) < 5:
         print(
-            "Usage: python send_sms.py BASE_URL TOKEN MOBILE MESSAGE [MESSAGE...]",
+            "Usage: python examples/python/send_sms.py BASE_URL TOKEN MOBILE MESSAGE [MESSAGE...]",
             file=sys.stderr,
         )
         print(
-            "Example: python send_sms.py http://sms.example.net/sms-gateway "
+            "Example: python examples/python/send_sms.py http://sms.example.net/sms-gateway "
             "$TOKEN +447700900000 Hello from Python",
             file=sys.stderr,
         )

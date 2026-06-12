@@ -2,4 +2,4 @@ hw/FreeBSD/*.sh text eol=lf
 hw/FreeBSD/*.md text eol=lf
 hw/FreeBSD/apache24/*.conf text eol=lf
 hw/FreeBSD/rc.d/* text eol=lf
-examples/shells/* text eol=lf
+examples/** text eol=lf

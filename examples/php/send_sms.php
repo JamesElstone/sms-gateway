@@ -3,8 +3,8 @@
 declare(strict_types=1);
 
 if ($argc < 5) {
-    fwrite(STDERR, "Usage: php send_sms.php BASE_URL TOKEN MOBILE MESSAGE [MESSAGE...]\n");
-    fwrite(STDERR, "Example: php send_sms.php http://sms.example.net/sms-gateway \$TOKEN +447700900000 Hello from PHP\n");
+    fwrite(STDERR, "Usage: php examples/php/send_sms.php BASE_URL TOKEN MOBILE MESSAGE [MESSAGE...]\n");
+    fwrite(STDERR, "Example: php examples/php/send_sms.php http://sms.example.net/sms-gateway \$TOKEN +447700900000 Hello from PHP\n");
     exit(2);
 }
 

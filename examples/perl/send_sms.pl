@@ -6,8 +6,8 @@ use Encode qw(encode);
 use HTTP::Tiny;
 
 if (@ARGV < 4) {
-    print STDERR "Usage: perl send_sms.pl BASE_URL TOKEN MOBILE MESSAGE [MESSAGE...]\n";
-    print STDERR "Example: perl send_sms.pl http://sms.example.net/sms-gateway \$TOKEN +447700900000 Hello from Perl\n";
+    print STDERR "Usage: perl examples/perl/send_sms.pl BASE_URL TOKEN MOBILE MESSAGE [MESSAGE...]\n";
+    print STDERR "Example: perl examples/perl/send_sms.pl http://sms.example.net/sms-gateway \$TOKEN +447700900000 Hello from Perl\n";
     exit 2;
 }
 

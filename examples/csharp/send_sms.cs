@@ -9,8 +9,8 @@ internal static class SendSmsExample
     {
         if (args.Length < 4)
         {
-            Console.Error.WriteLine("Usage: send-sms BASE_URL TOKEN MOBILE MESSAGE [MESSAGE...]");
-            Console.Error.WriteLine("Example: send-sms http://sms.example.net/sms-gateway $TOKEN +447700900000 Hello from C#");
+            Console.Error.WriteLine("Usage: send_sms BASE_URL TOKEN MOBILE MESSAGE [MESSAGE...]");
+            Console.Error.WriteLine("Example: send_sms http://sms.example.net/sms-gateway $TOKEN +447700900000 Hello from C#");
             return 2;
         }
 

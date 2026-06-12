@@ -6,8 +6,8 @@ import java.nio.charset.StandardCharsets
 
 fun main(args: Array<String>) {
     if (args.size < 4) {
-        System.err.println("Usage: kotlin send_sms.kt BASE_URL TOKEN MOBILE MESSAGE [MESSAGE...]")
-        System.err.println("Example: kotlin send_sms.kt http://sms.example.net/sms-gateway \$TOKEN +447700900000 Hello from Kotlin")
+        System.err.println("Usage: kotlin examples/kotlin/send_sms.kt BASE_URL TOKEN MOBILE MESSAGE [MESSAGE...]")
+        System.err.println("Example: kotlin examples/kotlin/send_sms.kt http://sms.example.net/sms-gateway \$TOKEN +447700900000 Hello from Kotlin")
         kotlin.system.exitProcess(2)
     }
 
