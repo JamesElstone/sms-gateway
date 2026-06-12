@@ -7,7 +7,7 @@
 # See LICENSE for details.
 PORTNAME=	sms-gateway
 DISTVERSION=	0.1.0
-CATEGORIES=	www comms
+CATEGORIES=	comms www
 
 MAINTAINER=	james@elstone.net
 COMMENT=	PHP SMS gateway for Huawei HiLink LTE modems
@@ -19,7 +19,7 @@ LICENSE_FILE=	${WRKSRC}/LICENSE
 USES=		php:web
 USE_GITHUB=	yes
 GH_ACCOUNT=	JamesElstone
-GH_TAGNAME=	Beta-1
+GH_TAGNAME=	Beta-2
 USE_PHP=	curl dom filter mbstring pdo pdo_sqlite simplexml sqlite3 xml
 
 RUN_DEPENDS=	${LOCALBASE}/bin/sqlite3:databases/sqlite3 \
@@ -38,7 +38,7 @@ OPTIONS_DEFINE=		APACHE DOCS
 OPTIONS_DEFAULT=	APACHE
 
 APACHE_DESC=		Install Apache 2.4 include file
-APACHE_USE=		APACHE=24
+APACHE_USES=		apache:24
 APACHE_RUN_DEPENDS=	mod_php${PHP_VER}>0:www/mod_php${PHP_VER}
 APACHE_PLIST_FILES=	etc/apache24/Includes/sms-gateway.conf
 
