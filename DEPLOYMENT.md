@@ -8,12 +8,14 @@ These notes assume the SMS Gateway is deployed on a FreeBSD host reachable as
 Install the PHP pieces if they are not already present:
 
 ```sh
-sudo pkg install -y apache24 php84 php84-curl php84-dom php84-mbstring php84-simplexml php84-xml mod_php84
+sudo pkg install -y apache24 php84 php84-curl php84-dom php84-mbstring php84-simplexml php84-xml mod_php84 usb_modeswitch
 ```
 
 `php84-dom` is needed for generating XML requests to the Huawei API.
 `php84-simplexml` is useful for older local test scripts and ad-hoc API
-inspection. After adding PHP extension packages, restart Apache:
+inspection. `usb_modeswitch` is needed by the FreeBSD Huawei LTE installer to
+switch/catch the USB dongle mode. After adding PHP extension packages, restart
+Apache:
 
 ```sh
 sudo service apache24 restart

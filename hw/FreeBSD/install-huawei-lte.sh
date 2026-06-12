@@ -31,6 +31,7 @@ LTE_STORAGE_U2DIAG_VALUE="${LTE_STORAGE_U2DIAG_VALUE:-255}"
 LTE_LOG_FILE="${LTE_LOG_FILE:-/tmp/install-huawei-lte.log}"
 LTE_ROUTE_ENABLE="${LTE_ROUTE_ENABLE:-NO}"
 USB_MODESWITCH_CONF="${USB_MODESWITCH_CONF:-/usr/local/etc/usb_modeswitch.conf}"
+REQUIRED_PACKAGES="${REQUIRED_PACKAGES:-apache24 php84 php84-curl php84-dom php84-mbstring php84-simplexml php84-xml mod_php84 usb_modeswitch}"
 SMS_GATEWAY_DEVICE_TYPE="${SMS_GATEWAY_DEVICE_TYPE:-huawei-lte}"
 SMS_GATEWAY_SERVICE_NAME="${SMS_GATEWAY_SERVICE_NAME:-sms_gateway}"
 SMS_GATEWAY_SERVICE_OUTPUT_INDENTED="${SMS_GATEWAY_SERVICE_OUTPUT_INDENTED:-0}"
@@ -491,14 +492,29 @@ run_sysrc_read() {
     sysrc "$@"
 }
 
-ensure_usb_modeswitch_package() {
-    if pkg info -e usb_modeswitch >/dev/null 2>&1; then
-        log "usb_modeswitch package is already installed"
+ensure_required_packages() {
+    if [ "$SERVICE_RUN" -eq 1 ]; then
+        log "Skipping package installation during --service run"
         return
     fi
 
-    log "Installing usb_modeswitch package"
-    pkg install -y usb_modeswitch
+    missing_packages=""
+
+    for package in $REQUIRED_PACKAGES; do
+        if pkg info -e "$package" >/dev/null 2>&1; then
+            log "$package package is already installed"
+            continue
+        fi
+
+        missing_packages="${missing_packages}${missing_packages:+ }$package"
+    done
+
+    if [ -z "$missing_packages" ]; then
+        return
+    fi
+
+    log "Installing required packages: $missing_packages"
+    pkg install -y $missing_packages
 }
 
 dhclient_has_ignore_routers_for_iface() {
@@ -2315,7 +2331,7 @@ main() {
     require_command ping
     require_command timeout
 
-    ensure_usb_modeswitch_package
+    ensure_required_packages
 
     case "$LTE_TARGET_MODE" in
         storage)
