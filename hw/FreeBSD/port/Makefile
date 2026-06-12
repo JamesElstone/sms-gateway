@@ -19,15 +19,18 @@ LICENSE_FILE=	${WRKSRC}/LICENSE
 USES=		php:web
 USE_GITHUB=	yes
 GH_ACCOUNT=	JamesElstone
-GH_TAGNAME=	Beta-7
+GH_TAGNAME=	Beta-8
 USE_PHP=	curl dom filter mbstring pdo pdo_sqlite simplexml sqlite3 xml
 
 RUN_DEPENDS=	${LOCALBASE}/bin/sqlite3:databases/sqlite3 \
 		${LOCALBASE}/sbin/usb_modeswitch:sysutils/usb_modeswitch
 
+SMS_GATEWAY_DBDIR=	/var/db/${PORTNAME}
+
 NO_ARCH=	yes
 NO_BUILD=	yes
 SUB_FILES=	pkg-message
+SUB_LIST=	SMS_GATEWAY_DBDIR=${SMS_GATEWAY_DBDIR}
 
 IGNORE_WITH_PHP=	80
 
@@ -50,8 +53,12 @@ do-install:
 		${STAGEDIR}${WWWDIR}/hw/FreeBSD/apache24 \
 		${STAGEDIR}${WWWDIR}/hw/FreeBSD/rc.d \
 		${STAGEDIR}${WWWDIR}/public \
-		${STAGEDIR}${WWWDIR}/src
+		${STAGEDIR}${WWWDIR}/src \
+		${STAGEDIR}${SMS_GATEWAY_DBDIR}
 	cd ${WRKSRC}/config && ${COPYTREE_SHARE} . ${STAGEDIR}${WWWDIR}/config
+	${SED} -e "s|^[[:space:]]*'database_dsn'[[:space:]]*=>.*|    'database_dsn' => getenv('SMS_GATEWAY_DATABASE_DSN') ?: 'sqlite:${SMS_GATEWAY_DBDIR}/sms-gateway.sqlite3',|" \
+		${WRKSRC}/config/local.php.example > \
+		${STAGEDIR}${WWWDIR}/config/local.php.sample
 	cd ${WRKSRC}/bin && ${COPYTREE_BIN} . ${STAGEDIR}${WWWDIR}/bin
 	cd ${WRKSRC}/public && ${COPYTREE_SHARE} . ${STAGEDIR}${WWWDIR}/public
 	cd ${WRKSRC}/src && ${COPYTREE_SHARE} . ${STAGEDIR}${WWWDIR}/src
@@ -73,7 +80,10 @@ do-install:
 
 post-install:
 	cd ${STAGEDIR}${PREFIX} && \
-		${FIND} ${WWWDIR_REL} -type f | ${SORT} >> ${TMPPLIST}
+		${FIND} ${WWWDIR_REL} -type f ! -path ${WWWDIR_REL}/config/local.php.sample | \
+		${SORT} >> ${TMPPLIST}
+	${ECHO_CMD} "@sample ${WWWDIR_REL}/config/local.php.sample" >> ${TMPPLIST}
+	${ECHO_CMD} "@dir(www,www,0750) ${SMS_GATEWAY_DBDIR}" >> ${TMPPLIST}
 
 post-install-APACHE-on:
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/apache24/Includes

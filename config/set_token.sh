@@ -13,6 +13,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 PHP_BIN="${PHP_BIN:-php}"
 HELPER="${SMS_GATEWAY_TOKEN_HELPER:-$SCRIPT_DIR/set_token.php}"
 TOKEN_FILE="${SMS_GATEWAY_TOKEN_FILE:-$SCRIPT_DIR/tokens.json}"
+TOKEN_FILE_OWNER="${SMS_GATEWAY_TOKEN_FILE_OWNER:-www}"
+TOKEN_FILE_GROUP="${SMS_GATEWAY_TOKEN_FILE_GROUP:-www}"
 SERVER_NAME="${SMS_GATEWAY_SERVER_NAME:-$(uname -n 2>/dev/null || hostname 2>/dev/null || printf '%s' '<deployed_server_dns_name>')}"
 PING_URL="${SMS_GATEWAY_PING_URL:-http://$SERVER_NAME/sms-gateway/ping}"
 
@@ -50,6 +52,10 @@ Options:
 Environment:
   PHP_BIN                 PHP executable. Default: php
   SMS_GATEWAY_TOKEN_FILE  Default token JSON file.
+  SMS_GATEWAY_TOKEN_FILE_OWNER
+                          Owner for tokens.json when running as root. Default: www
+  SMS_GATEWAY_TOKEN_FILE_GROUP
+                          Group for tokens.json when running as root. Default: www
   SMS_GATEWAY_SERVER_NAME Default server name used in the ping URL.
   SMS_GATEWAY_PING_URL    Default ping URL for the curl example.
 
@@ -115,6 +121,18 @@ read_secret() {
     fi
 
     printf '%s\n' "$secret"
+}
+
+fix_token_file_permissions() {
+    [ -f "$TOKEN_FILE" ] || return 0
+
+    if [ "$(id -u 2>/dev/null || printf '1')" = "0" ]; then
+        chown "$TOKEN_FILE_OWNER:$TOKEN_FILE_GROUP" "$TOKEN_FILE" 2>/dev/null || true
+        chmod 0640 "$TOKEN_FILE" 2>/dev/null || true
+        return 0
+    fi
+
+    chmod 0600 "$TOKEN_FILE" 2>/dev/null || true
 }
 
 while [ "$#" -gt 0 ]; do
@@ -271,6 +289,7 @@ else
         "$enabled_arg"
 fi
 TOKEN=""
+fix_token_file_permissions
 
 printf '\nPing check example:\n'
 printf '  curl -i -H "X-SMS-Gateway-Token: %s" "%s"\n' "$TOKEN_PLACEHOLDER" "$PING_URL"

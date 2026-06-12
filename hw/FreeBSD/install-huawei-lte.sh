@@ -11,6 +11,7 @@ set -eu
 
 USB_DEVICE_NAME="huaweimobile"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+SMS_GATEWAY_ROOT="${SMS_GATEWAY_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd -P)}"
 HOST_NAME="${SMS_GATEWAY_HOST_NAME:-$(uname -n 2>/dev/null || hostname 2>/dev/null || printf '%s' 'host')}"
 LTE_TARGET_MODE="${LTE_TARGET_MODE:-hilink}"
 LTE_IFACE="${LTE_IFACE:-ue0}"
@@ -46,6 +47,10 @@ SMS_GATEWAY_SERVICE_OUTPUT_INDENTED="${SMS_GATEWAY_SERVICE_OUTPUT_INDENTED:-0}"
 SMS_GATEWAY_RC_SOURCE="${SMS_GATEWAY_RC_SOURCE:-$SCRIPT_DIR/rc.d/sms_gateway}"
 SMS_GATEWAY_RC_DEST="${SMS_GATEWAY_RC_DEST:-/usr/local/etc/rc.d/sms_gateway}"
 SMS_GATEWAY_RC_OVERWRITE="${SMS_GATEWAY_RC_OVERWRITE:-NO}"
+SMS_GATEWAY_CONFIG_DIR="${SMS_GATEWAY_CONFIG_DIR:-$SMS_GATEWAY_ROOT/config}"
+SMS_GATEWAY_LOCAL_CONFIG="${SMS_GATEWAY_LOCAL_CONFIG:-$SMS_GATEWAY_CONFIG_DIR/local.php}"
+SMS_GATEWAY_TOKEN_FILE="${SMS_GATEWAY_TOKEN_FILE:-$SMS_GATEWAY_CONFIG_DIR/tokens.json}"
+SMS_GATEWAY_DB_DIR="${SMS_GATEWAY_DB_DIR:-/var/db/sms-gateway}"
 HUAWEI_VENDOR_ID="0x12d1"
 HUAWEI_STORAGE_PRODUCT_ID="0x1f01"
 HUAWEI_NCM_PRODUCT_ID="0x155e"
@@ -1578,6 +1583,32 @@ install_sms_gateway_rc_service() {
     chmod 555 "$SMS_GATEWAY_RC_DEST"
 }
 
+check_sms_gateway_app_config() {
+    [ "$SERVICE_RUN" -eq 0 ] || return 0
+
+    if [ ! -f "$SMS_GATEWAY_LOCAL_CONFIG" ]; then
+        log "SMS Gateway local config is missing: $SMS_GATEWAY_LOCAL_CONFIG"
+        log "The FreeBSD port should create it from local.php.sample; review before testing authenticated endpoints"
+    else
+        log "SMS Gateway local config present: $SMS_GATEWAY_LOCAL_CONFIG"
+    fi
+
+    if [ ! -d "$SMS_GATEWAY_DB_DIR" ]; then
+        log "SMS Gateway SQLite directory is missing: $SMS_GATEWAY_DB_DIR"
+    elif [ ! -w "$SMS_GATEWAY_DB_DIR" ]; then
+        log "SMS Gateway SQLite directory is not writable by this setup run: $SMS_GATEWAY_DB_DIR"
+    else
+        log "SMS Gateway SQLite directory present: $SMS_GATEWAY_DB_DIR"
+    fi
+
+    if [ ! -f "$SMS_GATEWAY_TOKEN_FILE" ]; then
+        log "SMS Gateway token file is missing: $SMS_GATEWAY_TOKEN_FILE"
+        log "Create one with: $SMS_GATEWAY_CONFIG_DIR/set_token.sh"
+    else
+        log "SMS Gateway token file present: $SMS_GATEWAY_TOKEN_FILE"
+    fi
+}
+
 remove_legacy_usb_modeswitch_rc_knob() {
     if sysrc -n usb_modeswitch_enable >/dev/null 2>&1; then
         log "Removing legacy usb_modeswitch_enable rc.conf knob"
@@ -2338,6 +2369,8 @@ main() {
     require_command timeout
 
     ensure_required_packages
+
+    check_sms_gateway_app_config
 
     case "$LTE_TARGET_MODE" in
         storage)
