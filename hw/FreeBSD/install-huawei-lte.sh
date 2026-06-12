@@ -32,6 +32,8 @@ LTE_LOG_FILE="${LTE_LOG_FILE:-/tmp/install-huawei-lte.log}"
 LTE_ROUTE_ENABLE="${LTE_ROUTE_ENABLE:-NO}"
 USB_MODESWITCH_CONF="${USB_MODESWITCH_CONF:-/usr/local/etc/usb_modeswitch.conf}"
 SMS_GATEWAY_DEVICE_TYPE="${SMS_GATEWAY_DEVICE_TYPE:-huawei-lte}"
+SMS_GATEWAY_SERVICE_NAME="${SMS_GATEWAY_SERVICE_NAME:-sms_gateway}"
+SMS_GATEWAY_SERVICE_OUTPUT_INDENTED="${SMS_GATEWAY_SERVICE_OUTPUT_INDENTED:-0}"
 SMS_GATEWAY_RC_SOURCE="${SMS_GATEWAY_RC_SOURCE:-$SCRIPT_DIR/rc.d/sms_gateway}"
 SMS_GATEWAY_RC_DEST="${SMS_GATEWAY_RC_DEST:-/usr/local/etc/rc.d/sms_gateway}"
 HUAWEI_VENDOR_ID="0x12d1"
@@ -63,6 +65,33 @@ die() {
     printf 'ERROR: %s\n' "$*" >&2
     log_file "ERROR: $*"
     exit 1
+}
+
+run_service_indented() {
+    status_file="$(mktemp "${TMPDIR:-/tmp}/install-huawei-lte.service.XXXXXX")" || return 1
+
+    printf '%s calling %s\n' "$SMS_GATEWAY_SERVICE_NAME" "${0##*/}"
+    SMS_GATEWAY_SERVICE_OUTPUT_INDENTED=1
+    export SMS_GATEWAY_SERVICE_OUTPUT_INDENTED
+
+    (
+        set +e
+        "$0" "$@"
+        child_status="$?"
+        printf '%s\n' "$child_status" > "$status_file"
+        exit 0
+    ) 2>&1 | sed 's/^/  /' || true
+
+    child_status="$(cat "$status_file" 2>/dev/null || true)"
+    rm -f "$status_file"
+
+    case "$child_status" in
+        ''|*[!0123456789]*)
+            return 1
+            ;;
+    esac
+
+    return "$child_status"
 }
 
 usage() {
@@ -2260,6 +2289,11 @@ attempt_lte_setup() {
 
 main() {
     parse_args "$@"
+
+    if [ "$SERVICE_RUN" -eq 1 ] && [ "$SMS_GATEWAY_SERVICE_OUTPUT_INDENTED" = "0" ]; then
+        run_service_indented "$@"
+        return "$?"
+    fi
 
     if [ "$STATUS_ONLY" -eq 1 ]; then
         require_command usbconfig
