@@ -472,6 +472,11 @@ final class SmsMessageStore
             return;
         }
 
+        $messageIds = array_values(array_diff($messageIds, $this->readMessageIdsForToken($tokenName, $messageIds)));
+        if ($messageIds === []) {
+            return;
+        }
+
         $statement = $this->pdo()->prepare(
             'INSERT INTO sms_token_reads (message_id, token_name, delivered_at)
              VALUES (:message_id, :token_name, :delivered_at)'
@@ -479,17 +484,11 @@ final class SmsMessageStore
         $deliveredAt = $this->now();
 
         foreach ($messageIds as $messageId) {
-            try {
-                $statement->execute([
-                    'message_id' => $messageId,
-                    'token_name' => $tokenName,
-                    'delivered_at' => $deliveredAt,
-                ]);
-            } catch (\PDOException $exception) {
-                if ($exception->getCode() !== '23000') {
-                    throw $exception;
-                }
-            }
+            $statement->execute([
+                'message_id' => $messageId,
+                'token_name' => $tokenName,
+                'delivered_at' => $deliveredAt,
+            ]);
         }
     }
 
@@ -511,6 +510,31 @@ final class SmsMessageStore
             $statement->bindValue($key, $value);
         }
         $statement->execute();
+
+        return array_values(array_map('strval', $statement->fetchAll(\PDO::FETCH_COLUMN)));
+    }
+
+    /** @param list<string> $messageIds */
+    private function readMessageIdsForToken(string $tokenName, array $messageIds): array
+    {
+        if ($messageIds === []) {
+            return [];
+        }
+
+        $placeholders = [];
+        $params = ['token_name' => $tokenName];
+        foreach ($messageIds as $index => $messageId) {
+            $key = 'id' . $index;
+            $placeholders[] = ':' . $key;
+            $params[$key] = $messageId;
+        }
+
+        $statement = $this->pdo()->prepare(
+            'SELECT message_id
+             FROM sms_token_reads
+             WHERE token_name = :token_name AND message_id IN (' . implode(', ', $placeholders) . ')'
+        );
+        $statement->execute($params);
 
         return array_values(array_map('strval', $statement->fetchAll(\PDO::FETCH_COLUMN)));
     }
