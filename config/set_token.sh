@@ -5,7 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 PHP_BIN="${PHP_BIN:-php}"
 HELPER="${SMS_GATEWAY_TOKEN_HELPER:-$SCRIPT_DIR/set_token.php}"
 TOKEN_FILE="${SMS_GATEWAY_TOKEN_FILE:-$SCRIPT_DIR/tokens.json}"
-PING_URL="${SMS_GATEWAY_PING_URL:-http://hydrogen/sms-gateway/ping}"
+SERVER_NAME="${SMS_GATEWAY_SERVER_NAME:-$(uname -n 2>/dev/null || hostname 2>/dev/null || printf '%s' '<deployed_server_dns_name>')}"
+PING_URL="${SMS_GATEWAY_PING_URL:-http://$SERVER_NAME/sms-gateway/ping}"
 
 TOKEN_NAME=""
 ALLOWED_IPS=""
@@ -38,6 +39,7 @@ Options:
 Environment:
   PHP_BIN                 PHP executable. Default: php
   SMS_GATEWAY_TOKEN_FILE  Default token JSON file.
+  SMS_GATEWAY_SERVER_NAME Default server name used in the ping URL.
   SMS_GATEWAY_PING_URL    Default ping URL for the curl example.
 
 EOF

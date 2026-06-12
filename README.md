@@ -6,7 +6,7 @@ XML web API, normally at `http://192.168.8.1/`.
 ## API
 
 ```text
-GET http://hydrogen.int.elstone.net/sms-gateway/
+GET http://<deployed_server_dns_name>/sms-gateway/
 ```
 
 Returns decoded LTE dongle status JSON, including an interpreted summary and
@@ -52,7 +52,7 @@ Example:
   "message": "E3372 reachable; SIM pin_ready; modem reports no service; signal 0/5",
   "device": {
     "name": "E3372",
-    "imei": "866785032862038"
+    "imei": "510563996265102"
   },
   "network": {
     "connection": {
@@ -64,7 +64,7 @@ Example:
 ```
 
 ```text
-GET http://hydrogen/sms-gateway/carriers/
+GET http://<deployed_server_dns_name>/sms-gateway/carriers/
 ```
 
 Runs the Huawei network operator search and returns the available PLMNs as JSON.
@@ -87,7 +87,7 @@ If no cached scan exists yet, concurrent requests return HTTP 409:
 Use `?force` to bypass a fresh cache and start a new scan:
 
 ```text
-GET http://hydrogen/sms-gateway/carriers/?force
+GET http://<deployed_server_dns_name>/sms-gateway/carriers/?force
 ```
 
 Forced scans still use the same scan lock. If a scan is already running, a
@@ -107,9 +107,9 @@ Example:
   "carriers": [
     {
       "index": 0,
-      "name": "O2 - UK",
-      "full_name": "O2 - UK",
-      "short_name": "O2 - UK",
+      "name": "Example Carrier",
+      "full_name": "Example Carrier",
+      "short_name": "Example",
       "numeric": "23410",
       "state": {
         "code": "1",
@@ -137,7 +137,7 @@ Example:
 ```
 
 ```text
-GET http://hydrogen/sms-gateway/ping
+GET http://<deployed_server_dns_name>/sms-gateway/ping
 X-SMS-Gateway-Token: {token}
 ```
 
@@ -156,7 +156,7 @@ Example response:
 ```
 
 ```text
-POST http://hydrogen.int.elstone.net/sms-gateway/send/{mobile-number}
+POST http://<deployed_server_dns_name>/sms-gateway/send/{mobile-number}
 Content-Type: text/plain
 X-SMS-Gateway-Token: {token}
 ```
@@ -200,9 +200,11 @@ Authorization: Bearer {token}
 
 ## Local configuration
 
-Copy `config/local.php.example` to `config/local.php` and adjust it on Hydrogen.
+Copy `config/local.php.example` to `config/local.php` and adjust it on the
+deployed server.
 
-The default dongle URL is `http://192.168.8.1/`, matching the old working files.
+The default dongle URL is `http://192.168.8.1/`, which is the common Huawei
+HiLink address.
 
 Copy `config/tokens.json.example` to `config/tokens.json` and add the approved
 tokens. Each token can be restricted to exact IP addresses or CIDR ranges:
@@ -222,6 +224,6 @@ tokens. Each token can be restricted to exact IP addresses or CIDR ranges:
 For quick local testing, `token` may be used instead of `token_sha256`, but the
 hashed form is better for the live file.
 
-## Hydrogen notes
+## Deployment
 
-See `docs/hydrogen-freebsd.md` for Apache and FreeBSD USB mode-switching notes.
+See `DEPLOYMENT.md` for Apache and FreeBSD LTE setup notes.

@@ -3,6 +3,7 @@ set -eu
 
 USB_DEVICE_NAME="huaweimobile"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+HOST_NAME="${SMS_GATEWAY_HOST_NAME:-$(uname -n 2>/dev/null || hostname 2>/dev/null || printf '%s' 'host')}"
 LTE_TARGET_MODE="${LTE_TARGET_MODE:-hilink}"
 LTE_IFACE="${LTE_IFACE:-ue0}"
 LTE_APN="${LTE_APN:-}"
@@ -76,7 +77,7 @@ Targets:
   hilink   Switch storage-mode Huawei dongles to HiLink 14db/14dc and test ue0.
            This is the default.
   storage  Disable automatic usb_modeswitch and switch/catch 12d1:1f01 storage mode.
-           If the dongle is already switched, reboot hydrogen after running this.
+           If the dongle is already switched, reboot $HOST_NAME after running this.
   ncm      Use the older NCM/serial attach path for 12d1:155e.
 
 Common options:
@@ -1729,8 +1730,8 @@ try_huawei_storage_at_recovery() {
 
 log_storage_reboot_instructions() {
     STORAGE_REBOOT_REQUIRED=1
-    log "Host is prepared to keep the dongle in storage mode on the next hydrogen boot"
-    log "Reboot hydrogen, then run: ./install-huawei-lte.sh --status"
+    log "Host is prepared to keep the dongle in storage mode on the next $HOST_NAME boot"
+    log "Reboot $HOST_NAME, then run: ./install-huawei-lte.sh --status"
     log "Storage mode is confirmed when --status shows id = 12d1:1f01"
     log "Physical reattach alone may come back as 12d1:14dc or 12d1:155e on this dongle"
 }
@@ -2288,7 +2289,7 @@ main() {
                 persist_sms_gateway_target storage
                 if [ "$STORAGE_REBOOT_REQUIRED" -eq 1 ]; then
                     log "Huawei storage-mode host preparation complete"
-                    log "Storage mode should be active after a full hydrogen reboot"
+                    log "Storage mode should be active after a full $HOST_NAME reboot"
                 else
                     log "Huawei storage-mode setup complete"
                     log "Check with: usbconfig; usbconfig -d <ugenX.Y> dump_device_desc"

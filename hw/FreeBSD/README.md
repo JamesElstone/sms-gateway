@@ -28,7 +28,7 @@ dongle web interface through the existing apache24 site lives at:
 hw/FreeBSD/apache24/sms-gateway.conf
 ```
 
-Install it on Hydrogen as:
+Install it on the deployed server as:
 
 ```sh
 sudo install -m 0644 /usr/local/sms-gateway/hw/FreeBSD/apache24/sms-gateway.conf /usr/local/etc/apache24/Includes/sms-gateway.conf
@@ -39,9 +39,9 @@ sudo service apache24 reload
 After installation, the expected routes are:
 
 ```text
-http://hydrogen.int.elstone.net/sms-gateway/
-http://hydrogen.int.elstone.net/sms-gateway/send/{mobile-number}
-http://hydrogen.int.elstone.net/lte-device/
+http://<deployed_server_dns_name>/sms-gateway/
+http://<deployed_server_dns_name>/sms-gateway/send/{mobile-number}
+http://<deployed_server_dns_name>/lte-device/
 ```
 
 ## What The Installer Does
@@ -50,7 +50,7 @@ http://hydrogen.int.elstone.net/lte-device/
 USB product mode, switches it where possible, and configures the FreeBSD network
 side.
 
-For the Huawei dongle tested on `hydrogen`, the important USB IDs are:
+For Huawei dongles supported by this setup, the important USB IDs are:
 
 ```text
 12d1:1f01  Huawei mass storage mode
@@ -71,7 +71,8 @@ ignore routers;
 ```
 
 This allows DHCP on `ue0` without letting the LTE dongle replace the system
-default route. On `hydrogen`, the default route should remain on `dwc0`.
+default route. On the deployed server, the default route should remain on the
+primary network interface.
 
 That is the intended default for this project: the device is primarily an SMS
 gateway, not the host's general-purpose LTE router. Leave LTE default-route
@@ -140,8 +141,8 @@ Supported targets are:
 hilink   Default. Switch storage-mode Huawei dongles to 12d1:14db/14dc and
          test that 192.168.8.1 is reachable through ue0.
 storage  Disable automatic usb_modeswitch handling and prepare/catch
-         12d1:1f01 storage mode. On this dongle, returning from a switched
-         network mode to true storage mode usually requires a full host reboot.
+         12d1:1f01 storage mode. Returning from a switched network mode to
+         true storage mode may require a full host reboot.
 ncm      Older NCM/composite mode path for 12d1:155e.
 ```
 
@@ -222,7 +223,7 @@ should report something like:
 ```text
 ugen2.2 = Huawei HiLink mode
 id = 12d1:14dc
-interfaces = dwc0 lo0 ue0
+interfaces = <primary_interface> lo0 ue0
 ue0 = present, status: active
 sms_gateway_enable = YES
 sms_gateway_device_type = huawei-lte
@@ -244,9 +245,8 @@ default route remains on the primary network interface.
 
 ## Storage Mode Caveat
 
-On the tested Huawei dongle, switching from HiLink or NCM back to true storage
-mode is not reliably completed by a USB detach/reattach alone. The repeatable
-path found during testing was:
+Switching from HiLink or NCM back to true storage mode is not always completed
+by a USB detach/reattach alone. The recommended path is:
 
 ```sh
 sudo ./install-huawei-lte.sh --target storage

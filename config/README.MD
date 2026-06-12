@@ -38,7 +38,7 @@ After creating a token, test authentication with:
 ```sh
 curl -i \
   -H 'X-SMS-Gateway-Token: <token>' \
-  http://hydrogen/sms-gateway/ping
+  http://<deployed_server_dns_name>/sms-gateway/ping
 ```
 
 Expected JSON includes:
@@ -51,10 +51,17 @@ Expected JSON includes:
 }
 ```
 
-You can override the URL printed by the helper:
+The helper builds this URL from `uname -n` by default. You can override just
+the server name:
 
 ```sh
-SMS_GATEWAY_PING_URL='http://hydrogen.int.elstone.net/sms-gateway/ping' sudo -E sh ./set_token.sh
+SMS_GATEWAY_SERVER_NAME='<deployed_server_dns_name>' sudo -E sh ./set_token.sh
+```
+
+Or override the full URL printed by the helper:
+
+```sh
+SMS_GATEWAY_PING_URL='http://<deployed_server_dns_name>/sms-gateway/ping' sudo -E sh ./set_token.sh
 ```
 
 ## File Format
