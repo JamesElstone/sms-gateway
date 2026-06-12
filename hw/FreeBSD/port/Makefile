@@ -19,7 +19,7 @@ LICENSE_FILE=	${WRKSRC}/LICENSE
 USES=		php:web
 USE_GITHUB=	yes
 GH_ACCOUNT=	JamesElstone
-GH_TAGNAME=	Beta-4
+GH_TAGNAME=	Beta-5
 USE_PHP=	curl dom filter mbstring pdo pdo_sqlite simplexml sqlite3 xml
 
 RUN_DEPENDS=	${LOCALBASE}/bin/sqlite3:databases/sqlite3 \
@@ -32,7 +32,7 @@ IGNORE_WITH_PHP=	80
 
 PLIST_FILES=	etc/rc.d/sms_gateway
 
-PORTDOCS=	API.md DEPLOYMENT.md FreeBSD-README.md README.md
+PORTDOCS=	API.md DEPLOYMENT.md FreeBSD-README.md PRIVACY.md README.md
 
 OPTIONS_DEFINE=		APACHE DOCS
 OPTIONS_DEFAULT=	APACHE
@@ -45,11 +45,13 @@ APACHE_PLIST_FILES=	etc/apache24/Includes/sms-gateway.conf
 do-install:
 	${MKDIR} ${STAGEDIR}${WWWDIR} \
 		${STAGEDIR}${WWWDIR}/config \
+		${STAGEDIR}${WWWDIR}/bin \
 		${STAGEDIR}${WWWDIR}/hw/FreeBSD/apache24 \
 		${STAGEDIR}${WWWDIR}/hw/FreeBSD/rc.d \
 		${STAGEDIR}${WWWDIR}/public \
 		${STAGEDIR}${WWWDIR}/src
 	cd ${WRKSRC}/config && ${COPYTREE_SHARE} . ${STAGEDIR}${WWWDIR}/config
+	cd ${WRKSRC}/bin && ${COPYTREE_BIN} . ${STAGEDIR}${WWWDIR}/bin
 	cd ${WRKSRC}/public && ${COPYTREE_SHARE} . ${STAGEDIR}${WWWDIR}/public
 	cd ${WRKSRC}/src && ${COPYTREE_SHARE} . ${STAGEDIR}${WWWDIR}/src
 	${INSTALL_DATA} ${WRKSRC}/LICENSE ${STAGEDIR}${WWWDIR}/
@@ -82,6 +84,7 @@ post-install-DOCS-on:
 	${MKDIR} ${STAGEDIR}${DOCSDIR}
 	${INSTALL_DATA} ${WRKSRC}/API.md ${STAGEDIR}${DOCSDIR}/
 	${INSTALL_DATA} ${WRKSRC}/DEPLOYMENT.md ${STAGEDIR}${DOCSDIR}/
+	${INSTALL_DATA} ${WRKSRC}/PRIVACY.md ${STAGEDIR}${DOCSDIR}/
 	${INSTALL_DATA} ${WRKSRC}/README.md ${STAGEDIR}${DOCSDIR}/
 	${INSTALL_DATA} ${WRKSRC}/hw/FreeBSD/README.md \
 		${STAGEDIR}${DOCSDIR}/FreeBSD-README.md
