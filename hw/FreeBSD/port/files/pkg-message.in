@@ -1,0 +1,25 @@
+[
+{ type: install
+  message: <<EOM
+SMS Gateway has been installed under:
+
+  %%WWWDIR%%
+
+To configure a Huawei HiLink LTE dongle now and persist the rc.d settings, run:
+
+  %%WWWDIR%%/hw/FreeBSD/install-huawei-lte.sh --target hilink
+
+That command enables sms_gateway in rc.conf after a successful target run. On
+subsequent boots, the rc.d service will run the hardware setup automatically.
+
+To review status without changing configuration:
+
+  service sms_gateway status
+
+If the APACHE option was enabled, check and reload Apache after configuration:
+
+  apachectl configtest
+  service apache24 reload
+EOM
+}
+]

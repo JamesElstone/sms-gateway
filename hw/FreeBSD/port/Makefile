@@ -19,7 +19,7 @@ LICENSE_FILE=	${WRKSRC}/LICENSE
 USES=		php:web
 USE_GITHUB=	yes
 GH_ACCOUNT=	JamesElstone
-GH_TAGNAME=	Beta-6
+GH_TAGNAME=	Beta-7
 USE_PHP=	curl dom filter mbstring pdo pdo_sqlite simplexml sqlite3 xml
 
 RUN_DEPENDS=	${LOCALBASE}/bin/sqlite3:databases/sqlite3 \
@@ -27,6 +27,7 @@ RUN_DEPENDS=	${LOCALBASE}/bin/sqlite3:databases/sqlite3 \
 
 NO_ARCH=	yes
 NO_BUILD=	yes
+SUB_FILES=	pkg-message
 
 IGNORE_WITH_PHP=	80
 
