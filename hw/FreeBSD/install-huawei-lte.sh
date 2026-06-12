@@ -45,6 +45,7 @@ SMS_GATEWAY_SERVICE_NAME="${SMS_GATEWAY_SERVICE_NAME:-sms_gateway}"
 SMS_GATEWAY_SERVICE_OUTPUT_INDENTED="${SMS_GATEWAY_SERVICE_OUTPUT_INDENTED:-0}"
 SMS_GATEWAY_RC_SOURCE="${SMS_GATEWAY_RC_SOURCE:-$SCRIPT_DIR/rc.d/sms_gateway}"
 SMS_GATEWAY_RC_DEST="${SMS_GATEWAY_RC_DEST:-/usr/local/etc/rc.d/sms_gateway}"
+SMS_GATEWAY_RC_OVERWRITE="${SMS_GATEWAY_RC_OVERWRITE:-NO}"
 HUAWEI_VENDOR_ID="0x12d1"
 HUAWEI_STORAGE_PRODUCT_ID="0x1f01"
 HUAWEI_NCM_PRODUCT_ID="0x155e"
@@ -1552,10 +1553,24 @@ install_sms_gateway_rc_service() {
         return 1
     fi
 
-    if [ -f "$SMS_GATEWAY_RC_DEST" ] && cmp -s "$SMS_GATEWAY_RC_SOURCE" "$SMS_GATEWAY_RC_DEST"; then
+    if [ -f "$SMS_GATEWAY_RC_DEST" ]; then
         chmod 555 "$SMS_GATEWAY_RC_DEST" 2>/dev/null || true
-        log "$SMS_GATEWAY_RC_DEST is already installed"
-        return 0
+
+        if cmp -s "$SMS_GATEWAY_RC_SOURCE" "$SMS_GATEWAY_RC_DEST"; then
+            log "$SMS_GATEWAY_RC_DEST is already installed"
+            return 0
+        fi
+
+        case "$SMS_GATEWAY_RC_OVERWRITE" in
+        [Yy][Ee][Ss]|[Yy]|1|[Tt][Rr][Uu][Ee])
+            log "Replacing existing sms_gateway rc.d service at $SMS_GATEWAY_RC_DEST"
+            ;;
+        *)
+            log "Leaving existing sms_gateway rc.d service in place: $SMS_GATEWAY_RC_DEST"
+            log "Set SMS_GATEWAY_RC_OVERWRITE=YES to replace it from $SMS_GATEWAY_RC_SOURCE"
+            return 0
+            ;;
+        esac
     fi
 
     log "Installing sms_gateway rc.d service to $SMS_GATEWAY_RC_DEST"
