@@ -19,6 +19,11 @@ if ($exitCode !== 0) {
     exit($exitCode);
 }
 
+passthru('php -l ' . escapeshellarg(dirname(__DIR__) . '/config/set_token.php'), $exitCode);
+if ($exitCode !== 0) {
+    exit($exitCode);
+}
+
 $carrierSummary = SmsGateway\CarrierMapper::fromSearch([
     'net_mode' => [
         'NetworkMode' => '03',
@@ -74,9 +79,21 @@ $testPrefix = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sms-gateway-test-' . g
 $lockPath = $testPrefix . '.lock';
 $cachePath = $testPrefix . '.cache.json';
 $forceStatePath = $testPrefix . '.force.json';
+$tokenPath = $testPrefix . '.tokens.json';
 @unlink($lockPath);
 @unlink($cachePath);
 @unlink($forceStatePath);
+@unlink($tokenPath);
+
+file_put_contents($tokenPath, json_encode([
+    'tokens' => [
+        [
+            'name' => 'ping-test',
+            'token_sha256' => hash('sha256', 'ping-secret-token'),
+            'allowed_ips' => ['127.0.0.1'],
+        ],
+    ],
+]));
 
 $app = new SmsGateway\App(new SmsGateway\Config([
     'dongle_url' => 'http://127.0.0.1:9/',
@@ -85,7 +102,30 @@ $app = new SmsGateway\App(new SmsGateway\Config([
     'carrier_scan_lock_file' => $lockPath,
     'carrier_scan_cache_file' => $cachePath,
     'carrier_scan_force_state_file' => $forceStatePath,
+    'token_file' => $tokenPath,
 ]));
+
+$response = $app->handle(
+    'GET',
+    '/sms-gateway/ping',
+    '',
+    ['X-SMS-Gateway-Token' => 'ping-secret-token'],
+    '127.0.0.1'
+);
+if (
+    $response->statusCode !== 200
+    || ($response->payload['auth'] ?? null) !== 'sucessful'
+    || ($response->payload['ping'] ?? null) !== 'pong'
+) {
+    fwrite(STDERR, "Authenticated ping response failed\n");
+    exit(1);
+}
+
+$response = $app->handle('GET', '/sms-gateway/ping', '', [], '127.0.0.1');
+if ($response->statusCode !== 401 || ($response->payload['status'] ?? null) !== 'unauthorised') {
+    fwrite(STDERR, "Missing token ping response failed\n");
+    exit(1);
+}
 
 file_put_contents($cachePath, json_encode([
     'created_at_epoch' => time(),
@@ -172,6 +212,7 @@ fclose($lock);
 @unlink($lockPath);
 @unlink($cachePath);
 @unlink($forceStatePath);
+@unlink($tokenPath);
 
 if ($response->statusCode !== 200 || ($response->payload['count'] ?? null) !== 42) {
     fwrite(STDERR, "Carrier scan stale cache during lock response failed\n");

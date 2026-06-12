@@ -33,6 +33,14 @@ final class App
             return $this->handleStatus();
         }
 
+        if (preg_match('#^/sms-gateway/ping/?$#', $path) === 1) {
+            if ($method !== 'GET') {
+                return Response::json(405, ['status' => 'method_not_allowed', 'message' => 'Only GET is supported']);
+            }
+
+            return $this->handlePing($headers, $clientIp);
+        }
+
         if ($method === 'GET' && preg_match('#^/sms-gateway/carriers/?$#', $path) === 1) {
             return $this->handleCarriers(array_key_exists('force', $query));
         }
@@ -124,6 +132,24 @@ final class App
                 'message' => $exception->getMessage(),
             ]);
         }
+    }
+
+    /** @param array<string, string> $headers */
+    private function handlePing(array $headers, string $clientIp): Response
+    {
+        $auth = (new FileTokenAuthorizer($this->config->tokenFile()))->authorize($headers, $clientIp);
+        if (!$auth->allowed) {
+            return Response::json($auth->httpStatus, [
+                'status' => 'unauthorised',
+                'message' => $auth->message,
+            ]);
+        }
+
+        return Response::json(200, [
+            'auth' => 'sucessful',
+            'datetime' => gmdate(DATE_ATOM),
+            'ping' => 'pong',
+        ]);
     }
 
     private function handleCarriers(bool $force = false): Response

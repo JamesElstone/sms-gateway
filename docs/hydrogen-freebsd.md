@@ -27,8 +27,8 @@ Copy this repository to:
 Copy the config:
 
 ```sh
-cp /usr/local/sms-gateway/config/example.php /usr/local/sms-gateway/config/local.php
-cp /usr/local/sms-gateway/config/tokens.example.json /usr/local/sms-gateway/config/tokens.json
+cp /usr/local/sms-gateway/config/local.php.example /usr/local/sms-gateway/config/local.php
+cp /usr/local/sms-gateway/config/tokens.json.example /usr/local/sms-gateway/config/tokens.json
 ```
 
 Then adjust `config/local.php` if the LTE dongle is not at `http://192.168.8.1/`.

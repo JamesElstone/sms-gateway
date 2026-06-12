@@ -10,7 +10,7 @@ require dirname(__DIR__) . '/src/autoload.php';
 
 $configFile = dirname(__DIR__) . '/config/local.php';
 if (!is_file($configFile)) {
-    $configFile = dirname(__DIR__) . '/config/example.php';
+    $configFile = dirname(__DIR__) . '/config/local.php.example';
 }
 
 $app = new App(new Config(require $configFile));

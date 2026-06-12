@@ -137,6 +137,25 @@ Example:
 ```
 
 ```text
+GET http://hydrogen/sms-gateway/ping
+X-SMS-Gateway-Token: {token}
+```
+
+Checks that the supplied SMS gateway token is valid without contacting the LTE
+dongle or sending a message. The token may also be sent as
+`Authorization: Bearer {token}`.
+
+Example response:
+
+```json
+{
+  "auth": "sucessful",
+  "datetime": "2026-06-12T10:00:00+00:00",
+  "ping": "pong"
+}
+```
+
+```text
 POST http://hydrogen.int.elstone.net/sms-gateway/send/{mobile-number}
 Content-Type: text/plain
 X-SMS-Gateway-Token: {token}
@@ -181,11 +200,11 @@ Authorization: Bearer {token}
 
 ## Local configuration
 
-Copy `config/example.php` to `config/local.php` and adjust it on Hydrogen.
+Copy `config/local.php.example` to `config/local.php` and adjust it on Hydrogen.
 
 The default dongle URL is `http://192.168.8.1/`, matching the old working files.
 
-Copy `config/tokens.example.json` to `config/tokens.json` and add the approved
+Copy `config/tokens.json.example` to `config/tokens.json` and add the approved
 tokens. Each token can be restricted to exact IP addresses or CIDR ranges:
 
 ```json
