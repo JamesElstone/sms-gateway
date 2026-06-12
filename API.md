@@ -15,8 +15,8 @@ The API is mounted at:
 http://<sms-gateway-server>/sms-gateway
 ```
 
-All responses are JSON. The `/ping` and `/send/{mobile-number}` endpoints
-require an SMS Gateway token. Create a real token on the server first by
+All responses are JSON. The `/ping`, `/send/{mobile-number}`, and `/read`
+endpoints require an enabled SMS Gateway token. Create a real token on the server first by
 running [set_token.sh](config/set_token.sh):
 
 ```sh
@@ -120,6 +120,112 @@ Missing or invalid tokens return JSON like:
 {
   "status": "unauthorised",
   "message": "Missing authorisation token"
+}
+```
+
+Disabled token entries return HTTP 403. Token entries without `"enabled": true`
+are disabled by default. `enabled` may be a JSON boolean or a case-insensitive
+string such as `"true"` or `"false"`.
+
+## Read SMS
+
+The read API returns messages from the local SMS cache. Run
+`bin/sms-gateway-sync.php` in the background to keep that cache synchronized
+from the LTE modem inbox.
+
+Each enabled token has its own read log, keyed by the token `name` in
+`config/tokens.json`.
+
+```text
+GET /read/
+```
+
+Returns messages not yet read by the calling token, then records those returned
+message IDs as read for that token.
+
+```sh
+curl -i \
+  -H "X-SMS-Gateway-Token: $TOKEN" \
+  "$BASE/read/"
+```
+
+```text
+GET /read/peek/
+```
+
+Returns messages not yet read by the calling token without changing read state.
+
+```text
+POST /read/ack/
+```
+
+Marks explicit cached message IDs as read for the calling token:
+
+```sh
+curl -i \
+  -X POST \
+  -H "X-SMS-Gateway-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"message_ids":["sms_..."]}' \
+  "$BASE/read/ack/"
+```
+
+```text
+GET /read/?all
+```
+
+Dumps cached SQLite messages without changing read state. Add `mark-read` to
+record only the returned rows as read for the calling token:
+
+```text
+GET /read/?all&mark-read&limit=10
+```
+
+`limit` applies to `/read/`, `/read/peek/`, and `?all`.
+
+Sender filtering uses the raw query string:
+
+```text
+GET /read/?07700%20000%20000
+GET /read/?%2B447000%20000%20000
+```
+
+The leading `+` should be URL-encoded as `%2B`.
+
+Example response:
+
+```json
+{
+  "status": "ok",
+  "mode": "unread",
+  "token": "internal-app",
+  "all": false,
+  "marked_read": true,
+  "limit": 100,
+  "search": null,
+  "count": 1,
+  "messages": [
+    {
+      "id": "sms_...",
+      "sender": "+447700900000",
+      "sender_normalized": "07700900000",
+      "content": "Example message",
+      "device_date": "2026-06-12 16:25:10",
+      "cached_at": "2026-06-12T16:25:20+00:00",
+      "updated_at": "2026-06-12T16:25:20+00:00",
+      "token_read_at": null,
+      "modem_deleted_at": null,
+      "device": {
+        "source_device_id": "Imei:510563996265102",
+        "index": 40009,
+        "smstat": 0,
+        "save_type": 4,
+        "priority": 0,
+        "sms_type": 1,
+        "sca": null
+      }
+    }
+  ]
 }
 ```
 

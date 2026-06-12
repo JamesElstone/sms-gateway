@@ -17,10 +17,12 @@ These notes assume the SMS Gateway is deployed on a FreeBSD host reachable as
 Install the PHP pieces if they are not already present:
 
 ```sh
-sudo pkg install -y apache24 php84 php84-curl php84-dom php84-mbstring php84-simplexml php84-xml mod_php84 usb_modeswitch
+sudo pkg install -y apache24 php84 php84-curl php84-dom php84-mbstring php84-pdo php84-pdo_sqlite php84-simplexml php84-sqlite3 php84-xml mod_php84 sqlite3 usb_modeswitch
 ```
 
 `php84-dom` is needed for generating XML requests to the Huawei API.
+`php84-pdo`, `php84-pdo_sqlite`, and `php84-sqlite3` are needed for the local
+SMS cache. `sqlite3` is installed so an administrator can inspect the cache.
 `php84-simplexml` is useful for older local test scripts and ad-hoc API
 inspection. `usb_modeswitch` is needed by the FreeBSD Huawei LTE installer to
 switch/catch the USB dongle mode. After adding PHP extension packages, restart
@@ -44,7 +46,8 @@ cp /usr/local/sms-gateway/config/tokens.json.example /usr/local/sms-gateway/conf
 ```
 
 Then adjust `config/local.php` if the LTE dongle is not at `http://192.168.8.1/`.
-Add the approved caller tokens and IP rules to `config/tokens.json`.
+Add the approved caller tokens and IP rules to `config/tokens.json`. Token
+entries must include `"enabled": true`; missing `enabled` means disabled.
 
 Create a token hash with:
 
@@ -79,6 +82,63 @@ the Apache proxy/PHP modules it needs if they are not already loaded, binds
 `.php` files below `/sms-gateway` to the PHP handler, and uses the deployed
 server's existing `mod_rewrite`, so no `/usr/local/etc/apache24/httpd.conf`
 edit is required.
+
+## SMS Cache
+
+The read API uses a local PDO database. SQLite is the default:
+
+```php
+'database_dsn' => 'sqlite:/var/db/sms-gateway/sms-gateway.sqlite3',
+'database_username' => null,
+'database_password' => null,
+```
+
+Create a persistent directory writable by the Apache/PHP user:
+
+```sh
+sudo mkdir -p /var/db/sms-gateway
+sudo chown www:www /var/db/sms-gateway
+sudo chmod 0750 /var/db/sms-gateway
+```
+
+Then set `database_dsn` in `config/local.php` to the `/var/db/sms-gateway`
+path. The application creates the schema automatically on first use.
+
+Inspect the cache with:
+
+```sh
+sudo -u www sqlite3 /var/db/sms-gateway/sms-gateway.sqlite3 '.tables'
+sudo -u www sqlite3 /var/db/sms-gateway/sms-gateway.sqlite3 'SELECT message_id, sender, device_date FROM sms_messages ORDER BY device_date DESC LIMIT 10;'
+```
+
+Run one sync pass:
+
+```sh
+cd /usr/local/sms-gateway
+php bin/sms-gateway-sync.php --once
+```
+
+Run the poller in the foreground at 10 second intervals:
+
+```sh
+cd /usr/local/sms-gateway
+php bin/sms-gateway-sync.php --interval 10
+```
+
+The sync service polls the LTE modem inbox count, caches inbox messages in
+SQLite, marks cached modem messages read, and deletes modem copies only when
+all enabled tokens have read them. If local or SIM storage reaches the
+configured pressure threshold, it deletes the oldest cached modem-resident
+messages in batches of 10.
+
+The storage pressure threshold is configured in `config/local.php`:
+
+```php
+'sms_storage_pressure_threshold' => 0.9,
+```
+
+SIM capacity comes from the modem's `SimUsed` and `SimMax` fields. Local modem
+inbox pressure uses `LocalInbox` and `LocalMax`.
 
 ## LTE USB Dongle Setup
 

@@ -165,6 +165,24 @@ Example response:
 ```
 
 ```text
+GET http://<deployed_server_dns_name>/sms-gateway/read/
+X-SMS-Gateway-Token: {token}
+```
+
+Returns cached SMS inbox messages not yet read by the calling token and marks
+the returned message IDs read for that token. Run
+`bin/sms-gateway-sync.php --interval 10` in the background to keep the local
+SQLite cache synchronized from the LTE modem inbox.
+
+Useful read forms:
+
+- `/sms-gateway/read/peek/` returns unread-for-token messages without marking.
+- `/sms-gateway/read/ack/` accepts `{"message_ids":["sms_..."]}` as JSON.
+- `/sms-gateway/read/?all` dumps the SQLite cache without marking.
+- `/sms-gateway/read/?all&mark-read&limit=10` marks only returned rows.
+- `/sms-gateway/read/?%2B447700900000` filters by sender.
+
+```text
 POST http://<deployed_server_dns_name>/sms-gateway/send/{mobile-number}
 Content-Type: text/plain
 X-SMS-Gateway-Token: {token}
@@ -225,6 +243,7 @@ tokens. Each token can be restricted to exact IP addresses or CIDR ranges:
   "tokens": [
     {
       "name": "internal-app",
+      "enabled": true,
       "token_sha256": "sha256-hash-of-the-token",
       "allowed_ips": ["192.168.1.20", "10.0.0.0/8"]
     }
@@ -232,9 +251,13 @@ tokens. Each token can be restricted to exact IP addresses or CIDR ranges:
 }
 ```
 
+Token entries without `"enabled": true` are disabled by default. The token
+`name` is used as the independent SMS read-log identity.
+
 For quick local testing, `token` may be used instead of `token_sha256`, but the
 hashed form is better for the live file.
 
 ## Deployment
 
-See `DEPLOYMENT.md` for Apache and FreeBSD LTE setup notes.
+See `DEPLOYMENT.md` for Apache, SQLite, and FreeBSD LTE setup notes. See
+`PRIVACY.md` for SMS cache and backup handling guidance.

@@ -5,6 +5,7 @@
   "tokens": [
     {
       "name": "internal-example",
+      "enabled": true,
       "token_sha256": "replace-with-sha256-of-token",
       "allowed_ips": [
         "127.0.0.1",

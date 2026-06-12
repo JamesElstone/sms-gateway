@@ -35,14 +35,45 @@ final class FileTokenAuthorizer
                 continue;
             }
 
+            if (!$this->entryEnabled($entry)) {
+                return AuthResult::deny(403, 'Token is disabled');
+            }
+
+            $name = trim((string) ($entry['name'] ?? ''));
+            if ($name === '') {
+                return AuthResult::deny(403, 'Token has no name');
+            }
+
             if (!$this->ipAllowed($clientIp, $entry['allowed_ips'] ?? [])) {
                 return AuthResult::deny(403, 'Token is not approved for this IP address');
             }
 
-            return AuthResult::allow();
+            return AuthResult::allow($name);
         }
 
         return AuthResult::deny(403, 'Invalid authorisation token');
+    }
+
+    /** @return list<string> */
+    public function enabledTokenNames(): array
+    {
+        if (!is_file($this->tokenFile)) {
+            return [];
+        }
+
+        $names = [];
+        foreach ($this->loadTokens() as $entry) {
+            if (!$this->entryEnabled($entry)) {
+                continue;
+            }
+
+            $name = trim((string) ($entry['name'] ?? ''));
+            if ($name !== '') {
+                $names[] = $name;
+            }
+        }
+
+        return array_values(array_unique($names));
     }
 
     /** @param array<string, string> $headers */
@@ -91,6 +122,25 @@ final class FileTokenAuthorizer
 
         if (isset($entry['token_sha256'])) {
             return hash_equals((string) $entry['token_sha256'], hash('sha256', $token));
+        }
+
+        return false;
+    }
+
+    /** @param array<string, mixed> $entry */
+    private function entryEnabled(array $entry): bool
+    {
+        $enabled = $entry['enabled'] ?? false;
+        if (is_bool($enabled)) {
+            return $enabled;
+        }
+
+        if (is_string($enabled)) {
+            return strtolower(trim($enabled)) === 'true';
+        }
+
+        if (is_int($enabled)) {
+            return $enabled === 1;
         }
 
         return false;

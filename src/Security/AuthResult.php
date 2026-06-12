@@ -16,13 +16,14 @@ final class AuthResult
     public function __construct(
         public readonly bool $allowed,
         public readonly int $httpStatus,
-        public readonly string $message
+        public readonly string $message,
+        public readonly ?string $tokenName = null
     ) {
     }
 
-    public static function allow(): self
+    public static function allow(string $tokenName): self
     {
-        return new self(true, 200, 'Authorised');
+        return new self(true, 200, 'Authorised', $tokenName);
     }
 
     public static function deny(int $httpStatus, string $message): self

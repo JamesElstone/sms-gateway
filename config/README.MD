@@ -9,7 +9,7 @@ See LICENSE for details.
 -->
 # SMS Gateway Token Configuration
 
-`tokens.json` controls which callers can send SMS messages through the gateway.
+`tokens.json` controls which callers can send and read SMS messages through the gateway.
 Callers provide the plaintext token in either header:
 
 ```sh
@@ -34,6 +34,9 @@ The script prompts for:
 - allowed client IP addresses or CIDR ranges
 - whether to generate a new random token or paste an existing token
 - whether to replace an existing entry with the same name
+
+By default the helper writes `"enabled": true`. Use `--disabled` to create an
+entry that exists but cannot authenticate yet.
 
 Generated tokens are printed once. Store the token before continuing; the file
 contains only `token_sha256`, so the plaintext token cannot be recovered later.
@@ -82,6 +85,7 @@ Example `tokens.json`:
   "tokens": [
     {
       "name": "internal-app",
+      "enabled": true,
       "token_sha256": "sha256-hash-of-the-token",
       "allowed_ips": [
         "127.0.0.1",
@@ -93,6 +97,10 @@ Example `tokens.json`:
   ]
 }
 ```
+
+Entries without `"enabled": true` are disabled by default. `enabled` may be a
+JSON boolean or a case-insensitive string such as `"true"` or `"false"`. The
+token `name` is also used as the per-token SMS read-log identity.
 
 `allowed_ips` may contain exact IPv4/IPv6 addresses or CIDR ranges. An empty
 array allows any client IP address to use that token.

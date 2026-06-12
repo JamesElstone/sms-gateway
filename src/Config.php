@@ -87,6 +87,60 @@ final class Config
         return max(1, (int) ($this->values['max_message_bytes'] ?? 1600));
     }
 
+    public function databaseDsn(): string
+    {
+        return (string) (
+            $this->values['database_dsn']
+            ?? 'sqlite:' . dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'sms-gateway.sqlite3'
+        );
+    }
+
+    public function databaseUsername(): ?string
+    {
+        $value = $this->values['database_username'] ?? null;
+        return $value === '' ? null : (is_string($value) ? $value : null);
+    }
+
+    public function databasePassword(): ?string
+    {
+        $value = $this->values['database_password'] ?? null;
+        return $value === '' ? null : (is_string($value) ? $value : null);
+    }
+
+    public function smsReadDefaultLimit(): int
+    {
+        return max(1, min((int) ($this->values['sms_read_default_limit'] ?? 100), $this->smsReadMaxLimit()));
+    }
+
+    public function smsReadMaxLimit(): int
+    {
+        return max(1, (int) ($this->values['sms_read_max_limit'] ?? 500));
+    }
+
+    public function smsStoragePressureThreshold(): float
+    {
+        $value = (float) ($this->values['sms_storage_pressure_threshold'] ?? 0.9);
+        return max(0.1, min($value, 1.0));
+    }
+
+    public function smsPressureDeleteBatchSize(): int
+    {
+        return max(1, (int) ($this->values['sms_pressure_delete_batch_size'] ?? 10));
+    }
+
+    public function smsSyncPageSize(): int
+    {
+        return max(1, min((int) ($this->values['sms_sync_page_size'] ?? 50), 500));
+    }
+
+    public function smsSyncLockFile(): string
+    {
+        return (string) (
+            $this->values['sms_sync_lock_file']
+            ?? sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sms-gateway-sms-sync.lock'
+        );
+    }
+
     public function tokenFile(): string
     {
         return (string) ($this->values['token_file'] ?? dirname(__DIR__) . '/config/tokens.json');

@@ -16,6 +16,7 @@ use SmsGateway\Lte\LteApiException;
 use SmsGateway\Lte\LteModemClient;
 use SmsGateway\Lte\LteTransportException;
 use SmsGateway\Security\FileTokenAuthorizer;
+use SmsGateway\Sms\SmsMessageStore;
 
 final class App
 {
@@ -50,6 +51,30 @@ final class App
 
         if ($method === 'GET' && preg_match('#^/sms-gateway/carriers/?$#', $path) === 1) {
             return $this->handleCarriers(array_key_exists('force', $query));
+        }
+
+        if (preg_match('#^/sms-gateway/read/ack/?$#', $path) === 1) {
+            if ($method !== 'POST') {
+                return Response::json(405, ['status' => 'method_not_allowed', 'message' => 'Only POST is supported']);
+            }
+
+            return $this->handleReadAck($headers, $clientIp, $body);
+        }
+
+        if (preg_match('#^/sms-gateway/read/peek/?$#', $path) === 1) {
+            if ($method !== 'GET') {
+                return Response::json(405, ['status' => 'method_not_allowed', 'message' => 'Only GET is supported']);
+            }
+
+            return $this->handleRead($headers, $clientIp, $query, true);
+        }
+
+        if (preg_match('#^/sms-gateway/read/?$#', $path) === 1) {
+            if ($method !== 'GET') {
+                return Response::json(405, ['status' => 'method_not_allowed', 'message' => 'Only GET is supported']);
+            }
+
+            return $this->handleRead($headers, $clientIp, $query, false);
         }
 
         if ($method !== 'POST') {
@@ -104,6 +129,86 @@ final class App
             return Response::json(502, [
                 'status' => 'lte_error',
                 'mobile' => $mobile,
+                'message' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * @param array<string, string> $headers
+     * @param array<string, mixed> $query
+     */
+    private function handleRead(array $headers, string $clientIp, array $query, bool $peek): Response
+    {
+        $auth = $this->authorizer()->authorize($headers, $clientIp);
+        if (!$auth->allowed || $auth->tokenName === null) {
+            return Response::json($auth->httpStatus, [
+                'status' => 'unauthorised',
+                'message' => $auth->message,
+            ]);
+        }
+
+        try {
+            $all = $this->queryHasFlag($query, 'all');
+            $markRead = !$peek && (!$all || $this->queryHasFlag($query, 'mark-read'));
+            $limit = $this->readLimit($query);
+            $search = $all ? null : $this->readSearchTerm($query);
+            $messages = $this->messageStore()->readForToken($auth->tokenName, $search, $limit, $all, $markRead);
+
+            return Response::json(200, [
+                'status' => 'ok',
+                'mode' => $peek ? 'peek' : ($all ? 'all' : 'unread'),
+                'token' => $auth->tokenName,
+                'all' => $all,
+                'marked_read' => $markRead,
+                'limit' => $limit,
+                'search' => $search,
+                'count' => count($messages),
+                'messages' => $messages,
+            ]);
+        } catch (\InvalidArgumentException $exception) {
+            return Response::json(400, [
+                'status' => 'invalid_request',
+                'message' => $exception->getMessage(),
+            ]);
+        } catch (\Throwable $exception) {
+            return Response::json(500, [
+                'status' => 'sms_cache_error',
+                'message' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    /** @param array<string, string> $headers */
+    private function handleReadAck(array $headers, string $clientIp, string $body): Response
+    {
+        $auth = $this->authorizer()->authorize($headers, $clientIp);
+        if (!$auth->allowed || $auth->tokenName === null) {
+            return Response::json($auth->httpStatus, [
+                'status' => 'unauthorised',
+                'message' => $auth->message,
+            ]);
+        }
+
+        try {
+            $messageIds = $this->ackMessageIds($body);
+            $result = $this->messageStore()->acknowledge($auth->tokenName, $messageIds);
+
+            return Response::json(200, [
+                'status' => 'acknowledged',
+                'token' => $auth->tokenName,
+                'acknowledged_count' => count($result['acknowledged']),
+                'acknowledged' => $result['acknowledged'],
+                'unknown' => $result['unknown'],
+            ]);
+        } catch (\InvalidArgumentException $exception) {
+            return Response::json(400, [
+                'status' => 'invalid_request',
+                'message' => $exception->getMessage(),
+            ]);
+        } catch (\Throwable $exception) {
+            return Response::json(500, [
+                'status' => 'sms_cache_error',
                 'message' => $exception->getMessage(),
             ]);
         }
@@ -359,6 +464,138 @@ final class App
         if (!@rename($tmpPath, $path)) {
             @unlink($tmpPath);
         }
+    }
+
+    private function authorizer(): FileTokenAuthorizer
+    {
+        return new FileTokenAuthorizer($this->config->tokenFile());
+    }
+
+    private function messageStore(): SmsMessageStore
+    {
+        return SmsMessageStore::fromConfig($this->config);
+    }
+
+    /** @param array<string, mixed> $query */
+    private function queryHasFlag(array $query, string $flag): bool
+    {
+        if (array_key_exists($flag, $query)) {
+            return true;
+        }
+
+        $underscoreFlag = str_replace('-', '_', $flag);
+        if (array_key_exists($underscoreFlag, $query)) {
+            return true;
+        }
+
+        foreach ($this->rawQueryParts($query) as $part) {
+            [$key] = array_pad(explode('=', $part, 2), 2, '');
+            $decoded = rawurldecode($key);
+            if ($decoded === $flag || $decoded === $underscoreFlag) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @param array<string, mixed> $query */
+    private function readLimit(array $query): int
+    {
+        $limit = $query['limit'] ?? null;
+        if (is_array($limit)) {
+            throw new \InvalidArgumentException('limit must be a single integer');
+        }
+
+        if ($limit === null || trim((string) $limit) === '') {
+            return $this->config->smsReadDefaultLimit();
+        }
+
+        $value = trim((string) $limit);
+        if (preg_match('/^[0-9]+$/', $value) !== 1) {
+            throw new \InvalidArgumentException('limit must be a positive integer');
+        }
+
+        return max(1, min((int) $value, $this->config->smsReadMaxLimit()));
+    }
+
+    /** @param array<string, mixed> $query */
+    private function readSearchTerm(array $query): ?string
+    {
+        foreach ($this->rawQueryParts($query) as $part) {
+            if ($part === '') {
+                continue;
+            }
+
+            [$rawKey, $rawValue] = array_pad(explode('=', $part, 2), 2, null);
+            $key = rawurldecode($rawKey);
+            if (in_array($key, ['all', 'mark-read', 'mark_read', 'limit'], true)) {
+                continue;
+            }
+
+            if ($rawValue !== null) {
+                if ($key !== 'from') {
+                    continue;
+                }
+
+                $term = rawurldecode($rawValue);
+                return trim($term) === '' ? null : trim($term);
+            }
+
+            $term = trim(rawurldecode($rawKey));
+            return $term === '' ? null : $term;
+        }
+
+        if (isset($query['from']) && !is_array($query['from'])) {
+            $from = trim((string) $query['from']);
+            return $from === '' ? null : $from;
+        }
+
+        return null;
+    }
+
+    /** @param array<string, mixed> $query */
+    private function rawQueryParts(array $query): array
+    {
+        $raw = $query['__raw_query'] ?? '';
+        if (!is_string($raw) || $raw === '') {
+            return [];
+        }
+
+        return explode('&', $raw);
+    }
+
+    /** @return list<string> */
+    private function ackMessageIds(string $body): array
+    {
+        $body = trim($body);
+        if ($body === '') {
+            throw new \InvalidArgumentException('ack body is empty');
+        }
+
+        $decoded = json_decode($body, true);
+        if (!is_array($decoded)) {
+            throw new \InvalidArgumentException('ack body must be JSON');
+        }
+
+        $messageIds = $decoded['message_ids'] ?? $decoded['ids'] ?? $decoded;
+        if (!is_array($messageIds) || !array_is_list($messageIds)) {
+            throw new \InvalidArgumentException('ack body must contain a message_ids array');
+        }
+
+        $ids = [];
+        foreach ($messageIds as $messageId) {
+            if (is_array($messageId)) {
+                throw new \InvalidArgumentException('message_ids must contain strings');
+            }
+
+            $id = trim((string) $messageId);
+            if ($id !== '') {
+                $ids[] = $id;
+            }
+        }
+
+        return array_values(array_unique($ids));
     }
 
     private function modemClient(?int $timeoutSeconds = null): LteModemClient

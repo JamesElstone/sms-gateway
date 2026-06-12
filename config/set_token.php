@@ -28,6 +28,8 @@ Options:
   --name NAME         Token entry name.
   --allowed-ips LIST  Comma or whitespace separated IP/CIDR allow-list.
                       Use an empty value to allow any client IP.
+  --enabled           Store the token entry as enabled. This is the default.
+  --disabled          Store the token entry as disabled.
   --replace           Replace an existing entry with the same name.
   --entry-exists      Check whether a named entry exists; no file changes.
 
@@ -199,7 +201,7 @@ function writeTokenDocument(string $tokenFile, array $document): void
 }
 
 /** @param array<string, mixed> $document */
-function updateTokenDocument(array $document, string $name, string $token, array $allowedIps, bool $replace): array
+function updateTokenDocument(array $document, string $name, string $token, array $allowedIps, bool $replace, bool $enabled): array
 {
     if (strlen($token) < 16) {
         fail('token must be at least 16 characters long');
@@ -207,6 +209,7 @@ function updateTokenDocument(array $document, string $name, string $token, array
 
     $newEntry = [
         'name' => $name,
+        'enabled' => $enabled,
         'token_sha256' => hash('sha256', $token),
         'allowed_ips' => $allowedIps,
     ];
@@ -257,11 +260,16 @@ if (hasFlag($args, '--entry-exists')) {
 
 $allowedIps = parseAllowedIps(optionValue($args, '--allowed-ips') ?? '');
 $replace = hasFlag($args, '--replace');
+if (hasFlag($args, '--enabled') && hasFlag($args, '--disabled')) {
+    fail('choose only one of --enabled or --disabled');
+}
+$enabled = !hasFlag($args, '--disabled');
 $token = trim((string) stream_get_contents(STDIN));
 
-[$document, $action] = updateTokenDocument($document, $name, $token, $allowedIps, $replace);
+[$document, $action] = updateTokenDocument($document, $name, $token, $allowedIps, $replace, $enabled);
 writeTokenDocument($tokenFile, $document);
 
 echo "Token entry {$action}: {$name}\n";
 echo "Token file: {$tokenFile}\n";
+echo 'Enabled: ' . ($enabled ? 'true' : 'false') . "\n";
 echo 'Allowed IP rules: ' . (count($allowedIps) === 0 ? 'any client IP' : implode(', ', $allowedIps)) . "\n";

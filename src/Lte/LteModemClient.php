@@ -94,6 +94,79 @@ final class LteModemClient
     }
 
     /** @return array<string, mixed> */
+    public function smsCount(): array
+    {
+        $this->initializeSession();
+
+        $response = $this->get('sms/sms-count', self::AJAX_HEADERS);
+        return is_array($response) ? $response : ['value' => $response];
+    }
+
+    /** @return array<string, mixed> */
+    public function notifications(): array
+    {
+        $this->initializeSession();
+
+        $response = $this->get('monitoring/check-notifications', self::AJAX_HEADERS);
+        return is_array($response) ? $response : ['value' => $response];
+    }
+
+    /** @return array<string, mixed> */
+    public function deviceInformation(): array
+    {
+        $this->initializeSession();
+
+        $response = $this->get('device/information', self::AJAX_HEADERS);
+        return is_array($response) ? $response : ['value' => $response];
+    }
+
+    /** @return array<string, mixed> */
+    public function smsInboxPage(int $pageIndex, int $readCount): array
+    {
+        $this->initializeSession();
+
+        $response = $this->post(
+            'sms/sms-list',
+            [
+                'PageIndex' => max(1, $pageIndex),
+                'ReadCount' => max(1, $readCount),
+                'BoxType' => 1,
+                'SortType' => 0,
+                'Ascending' => 0,
+                'UnreadPreferred' => 0,
+            ],
+            self::AJAX_HEADERS,
+            'Content-Type: application/x-www-form-urlencoded; charset=UTF-8'
+        );
+
+        return is_array($response) ? $response : ['value' => $response];
+    }
+
+    public function setSmsRead(int $index): mixed
+    {
+        $this->initializeSession();
+
+        return $this->post(
+            'sms/set-read',
+            ['Index' => $index],
+            self::AJAX_HEADERS,
+            'Content-Type: application/x-www-form-urlencoded; charset=UTF-8'
+        );
+    }
+
+    public function deleteSms(int $index): mixed
+    {
+        $this->initializeSession();
+
+        return $this->post(
+            'sms/delete-sms',
+            ['Index' => $index],
+            self::AJAX_HEADERS,
+            'Content-Type: application/x-www-form-urlencoded; charset=UTF-8'
+        );
+    }
+
+    /** @return array<string, mixed> */
     public function searchCarriers(): array
     {
         $this->initializeSession();

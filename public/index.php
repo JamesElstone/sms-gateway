@@ -33,6 +33,7 @@ $query = [];
 $queryString = parse_url($requestUri, PHP_URL_QUERY);
 if (is_string($queryString)) {
     parse_str($queryString, $query);
+    $query['__raw_query'] = $queryString;
 }
 
 $response = $app->handle(

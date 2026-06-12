@@ -21,6 +21,7 @@ ALLOWED_IPS=""
 ALLOWED_IPS_SEEN=0
 REPLACE=0
 TOKEN_MODE=""
+TOKEN_ENABLED=1
 
 umask 077
 
@@ -39,6 +40,8 @@ Options:
       --allowed-ips LIST  Comma or whitespace separated IP/CIDR allow-list.
                            Empty means any client IP may use this token.
       --replace           Replace an existing entry with the same name.
+      --enabled           Store the token entry as enabled. This is the default.
+      --disabled          Store the token entry as disabled.
       --generate          Generate a new random token.
       --paste             Prompt for an existing token instead.
       --ping-url URL      URL shown in the final curl ping example.
@@ -153,6 +156,14 @@ while [ "$#" -gt 0 ]; do
             REPLACE=1
             shift
             ;;
+        --enabled)
+            TOKEN_ENABLED=1
+            shift
+            ;;
+        --disabled)
+            TOKEN_ENABLED=0
+            shift
+            ;;
         --generate)
             [ -z "$TOKEN_MODE" ] || die "choose only one of --generate or --paste"
             TOKEN_MODE="generate"
@@ -240,17 +251,24 @@ else
     TOKEN_PLACEHOLDER="<the-token-you-entered>"
 fi
 
+enabled_arg="--enabled"
+if [ "$TOKEN_ENABLED" -eq 0 ]; then
+    enabled_arg="--disabled"
+fi
+
 if [ "$REPLACE" -eq 1 ]; then
     printf '%s' "$TOKEN" | "$PHP_BIN" "$HELPER" \
         --token-file "$TOKEN_FILE" \
         --name "$TOKEN_NAME" \
         --allowed-ips "$ALLOWED_IPS" \
+        "$enabled_arg" \
         --replace
 else
     printf '%s' "$TOKEN" | "$PHP_BIN" "$HELPER" \
         --token-file "$TOKEN_FILE" \
         --name "$TOKEN_NAME" \
-        --allowed-ips "$ALLOWED_IPS"
+        --allowed-ips "$ALLOWED_IPS" \
+        "$enabled_arg"
 fi
 TOKEN=""
 
