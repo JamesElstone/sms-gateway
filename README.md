@@ -162,13 +162,15 @@ X-SMS-Gateway-Token: {token}
 ```
 
 The request body is sent as the SMS payload.
+Example mobile numbers in this documentation use Ofcom's drama range:
+`07700 900000` to `07700 900999`.
 
 Responses are JSON:
 
 ```json
 {
   "status": "sent",
-  "mobile": "+447700900123",
+  "mobile": "+447700900000",
   "message": "SMS sent"
 }
 ```

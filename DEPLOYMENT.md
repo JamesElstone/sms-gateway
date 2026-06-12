@@ -124,12 +124,15 @@ the host's default route remains on its primary network interface unless
 
 ## Test Send
 
+The example mobile number below is the E.164 form of `07700 900000`, from
+Ofcom's drama range.
+
 ```sh
 curl -i \
   -X POST \
   -H 'X-SMS-Gateway-Token: your-long-secret-token' \
   --data 'Hello from SMS Gateway' \
-  http://<deployed_server_dns_name>/sms-gateway/send/+447700900123
+  http://<deployed_server_dns_name>/sms-gateway/send/+447700900000
 ```
 
 Expected successful response:
@@ -137,7 +140,7 @@ Expected successful response:
 ```json
 {
   "status": "sent",
-  "mobile": "+447700900123",
+  "mobile": "+447700900000",
   "message": "SMS sent"
 }
 ```
