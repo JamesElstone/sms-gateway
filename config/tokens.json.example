@@ -1,4 +1,7 @@
 {
+  "_copyright": "Copyright (c) 2026, James Elstone",
+  "_spdx_license_identifier": "BSD-3-Clause",
+  "_source": "https://github.com/JamesElstone/sms-gateway",
   "tokens": [
     {
       "name": "internal-example",

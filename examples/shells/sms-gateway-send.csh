@@ -1,5 +1,13 @@
 #!/bin/csh -f
 
+# Copyright (c) 2026, James Elstone
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# This file is part of SMS Gateway:
+# https://github.com/JamesElstone/sms-gateway
+#
+# See LICENSE for details.
+
 if ($?SMS_GATEWAY_CURL) then
     set curl_bin = "$SMS_GATEWAY_CURL"
 else

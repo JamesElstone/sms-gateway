@@ -1,5 +1,13 @@
 <?php
 
+// Copyright (c) 2026, James Elstone
+// SPDX-License-Identifier: BSD-3-Clause
+//
+// This file is part of SMS Gateway:
+// https://github.com/JamesElstone/sms-gateway
+//
+// See LICENSE for details.
+
 return [
     'dongle_url' => getenv('SMS_GATEWAY_DONGLE_URL') ?: 'http://192.168.8.1/',
     'dongle_username' => getenv('SMS_GATEWAY_DONGLE_USERNAME') ?: null,

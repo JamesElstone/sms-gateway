@@ -1,3 +1,10 @@
+# Copyright (c) 2026, James Elstone
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# This file is part of SMS Gateway:
+# https://github.com/JamesElstone/sms-gateway
+#
+# See LICENSE for details.
 hw/FreeBSD/*.sh text eol=lf
 hw/FreeBSD/*.md text eol=lf
 hw/FreeBSD/apache24/*.conf text eol=lf

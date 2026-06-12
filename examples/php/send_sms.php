@@ -1,6 +1,13 @@
 <?php
-
 declare(strict_types=1);
+
+// Copyright (c) 2026, James Elstone
+// SPDX-License-Identifier: BSD-3-Clause
+//
+// This file is part of SMS Gateway:
+// https://github.com/JamesElstone/sms-gateway
+//
+// See LICENSE for details.
 
 if ($argc < 5) {
     fwrite(STDERR, "Usage: php examples/php/send_sms.php BASE_URL TOKEN MOBILE MESSAGE [MESSAGE...]\n");
