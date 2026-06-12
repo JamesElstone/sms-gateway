@@ -1,0 +1,8 @@
+SMS Gateway is a small PHP web application for sending SMS messages through a
+Huawei HiLink LTE modem or similar USB dongle that exposes a local XML HTTP API.
+It provides JSON HTTP endpoints for checking modem health, scanning available
+mobile networks, validating API tokens, and sending SMS messages.
+
+The project also includes FreeBSD-specific support for configuring a Huawei LTE
+dongle at boot, keeping the primary network default route intact by default, and
+publishing the gateway through Apache.
