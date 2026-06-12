@@ -89,7 +89,7 @@ replacing the host's normal default route.
 Show current dongle and service status with:
 
 ```sh
-./install-huawei-lte.sh --status
+sudo ./install-huawei-lte.sh --status
 ```
 
 If the dongle should provide the host's default route, deliberately opt in:
@@ -103,7 +103,7 @@ Prepare the host so the dongle remains in storage mode after a full reboot:
 ```sh
 sudo ./install-huawei-lte.sh --target storage
 sudo reboot
-./install-huawei-lte.sh --status
+sudo ./install-huawei-lte.sh --status
 ```
 
 Use the older NCM/serial attach path only when needed:

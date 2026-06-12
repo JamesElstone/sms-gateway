@@ -112,7 +112,7 @@ Targets:
 
 Common options:
   -h, --help                       Show this help text.
-      --status                     Show current Huawei USB/network state and exit.
+      --status                     Show current Huawei USB/network state and exit. Requires root.
       --service                    Run from rc.d; suppress terminal-only final checks.
       --target MODE                Set target mode: storage, hilink, or ncm.
       --iface IFACE                USB ethernet interface name. Default: $LTE_IFACE.
@@ -467,28 +467,10 @@ require_command() {
 }
 
 run_usbconfig() {
-    if [ "$(id -u)" -eq 0 ]; then
-        usbconfig "$@"
-        return "$?"
-    fi
-
-    if command -v sudo >/dev/null 2>&1; then
-        sudo -n /usr/sbin/usbconfig "$@" 2>/dev/null && return 0
-    fi
-
     usbconfig "$@"
 }
 
 run_sysrc_read() {
-    if [ "$(id -u)" -eq 0 ]; then
-        sysrc "$@"
-        return "$?"
-    fi
-
-    if command -v sudo >/dev/null 2>&1; then
-        sudo -n /usr/sbin/sysrc "$@" 2>/dev/null && return 0
-    fi
-
     sysrc "$@"
 }
 
@@ -1776,7 +1758,7 @@ try_huawei_storage_at_recovery() {
 log_storage_reboot_instructions() {
     STORAGE_REBOOT_REQUIRED=1
     log "Host is prepared to keep the dongle in storage mode on the next $HOST_NAME boot"
-    log "Reboot $HOST_NAME, then run: ./install-huawei-lte.sh --status"
+    log "Reboot $HOST_NAME, then run: ./install-huawei-lte.sh --status as root"
     log "Storage mode is confirmed when --status shows id = 12d1:1f01"
     log "Physical reattach alone may come back as 12d1:14dc or 12d1:155e on this dongle"
 }
@@ -2306,6 +2288,8 @@ attempt_lte_setup() {
 main() {
     parse_args "$@"
 
+    require_root
+
     if [ "$SERVICE_RUN" -eq 1 ] && [ "$SMS_GATEWAY_SERVICE_OUTPUT_INDENTED" = "0" ]; then
         run_service_indented "$@"
         return "$?"
@@ -2319,7 +2303,6 @@ main() {
         return 0
     fi
 
-    require_root
     log_file "----- run start: target=$LTE_TARGET_MODE iface=$LTE_IFACE -----"
     require_command pkg
     require_command usbconfig

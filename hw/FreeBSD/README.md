@@ -94,10 +94,10 @@ Show help:
 ./install-huawei-lte.sh --help
 ```
 
-Show current status. This is intended to work without root:
+Show current status. This requires root so the script can read USB descriptors:
 
 ```sh
-./install-huawei-lte.sh --status
+sudo ./install-huawei-lte.sh --status
 ```
 
 Switch/configure the dongle for HiLink mode:
@@ -215,7 +215,7 @@ the installer tries to detect and switch the dongle.
 After a successful HiLink setup:
 
 ```sh
-./install-huawei-lte.sh --status
+sudo ./install-huawei-lte.sh --status
 ```
 
 should report something like:
@@ -251,7 +251,7 @@ by a USB detach/reattach alone. The recommended path is:
 ```sh
 sudo ./install-huawei-lte.sh --target storage
 sudo reboot
-./install-huawei-lte.sh --status
+sudo ./install-huawei-lte.sh --status
 ```
 
 Storage mode is confirmed when status shows:
