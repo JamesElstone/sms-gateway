@@ -19,22 +19,25 @@ LICENSE_FILE=	${WRKSRC}/LICENSE
 USES=		php:web
 USE_GITHUB=	yes
 GH_ACCOUNT=	JamesElstone
-GH_TAGNAME=	Beta-9
+GH_TAGNAME=	Beta-10
 USE_PHP=	curl dom filter mbstring pdo pdo_sqlite simplexml sqlite3 xml
 
 RUN_DEPENDS=	${LOCALBASE}/bin/sqlite3:databases/sqlite3 \
 		${LOCALBASE}/sbin/usb_modeswitch:sysutils/usb_modeswitch
 
 SMS_GATEWAY_DBDIR=	/var/db/${PORTNAME}
+SMS_GATEWAY_LOGDIR=	/var/log/${PORTNAME}
 
 NO_ARCH=	yes
 NO_BUILD=	yes
-SUB_FILES=	pkg-message
-SUB_LIST=	SMS_GATEWAY_DBDIR=${SMS_GATEWAY_DBDIR}
+SUB_FILES=	pkg-message sms-gateway-newsyslog.conf
+SUB_LIST=	SMS_GATEWAY_DBDIR=${SMS_GATEWAY_DBDIR} \
+		SMS_GATEWAY_LOGDIR=${SMS_GATEWAY_LOGDIR}
 
 IGNORE_WITH_PHP=	80
 
-PLIST_FILES=	etc/rc.d/sms_gateway
+PLIST_FILES=	etc/rc.d/sms_gateway \
+		libexec/sms-gateway-newsyslog
 
 PORTDOCS=	API.md DEPLOYMENT.md FreeBSD-README.md PRIVACY.md README.md
 
@@ -49,17 +52,19 @@ APACHE_PLIST_FILES=	etc/apache24/Includes/sms-gateway.conf
 do-install:
 	${MKDIR} ${STAGEDIR}${WWWDIR} \
 		${STAGEDIR}${WWWDIR}/config \
-		${STAGEDIR}${WWWDIR}/bin \
 		${STAGEDIR}${WWWDIR}/hw/FreeBSD/apache24 \
+		${STAGEDIR}${WWWDIR}/hw/FreeBSD/newsyslog \
 		${STAGEDIR}${WWWDIR}/hw/FreeBSD/rc.d \
 		${STAGEDIR}${WWWDIR}/public \
 		${STAGEDIR}${WWWDIR}/src \
-		${STAGEDIR}${SMS_GATEWAY_DBDIR}
+		${STAGEDIR}${SMS_GATEWAY_DBDIR} \
+		${STAGEDIR}${SMS_GATEWAY_LOGDIR} \
+		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d \
+		${STAGEDIR}${PREFIX}/libexec
 	cd ${WRKSRC}/config && ${COPYTREE_SHARE} . ${STAGEDIR}${WWWDIR}/config
 	${SED} -e "s|^[[:space:]]*'database_dsn'[[:space:]]*=>.*|    'database_dsn' => getenv('SMS_GATEWAY_DATABASE_DSN') ?: 'sqlite:${SMS_GATEWAY_DBDIR}/sms-gateway.sqlite3',|" \
 		${WRKSRC}/config/local.php.example > \
 		${STAGEDIR}${WWWDIR}/config/local.php.sample
-	cd ${WRKSRC}/bin && ${COPYTREE_BIN} . ${STAGEDIR}${WWWDIR}/bin
 	cd ${WRKSRC}/public && ${COPYTREE_SHARE} . ${STAGEDIR}${WWWDIR}/public
 	cd ${WRKSRC}/src && ${COPYTREE_SHARE} . ${STAGEDIR}${WWWDIR}/src
 	${INSTALL_DATA} ${WRKSRC}/LICENSE ${STAGEDIR}${WWWDIR}/
@@ -69,6 +74,8 @@ do-install:
 	${INSTALL_SCRIPT} ${WRKSRC}/config/set_token.sh ${STAGEDIR}${WWWDIR}/config/
 	${INSTALL_SCRIPT} ${WRKSRC}/hw/FreeBSD/install-huawei-lte.sh \
 		${STAGEDIR}${WWWDIR}/hw/FreeBSD/
+	${INSTALL_SCRIPT} ${WRKSRC}/hw/FreeBSD/newsyslog/sms-gateway-newsyslog \
+		${STAGEDIR}${WWWDIR}/hw/FreeBSD/newsyslog/
 	${INSTALL_SCRIPT} ${WRKSRC}/hw/FreeBSD/rc.d/sms_gateway \
 		${STAGEDIR}${WWWDIR}/hw/FreeBSD/rc.d/
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/rc.d
@@ -77,13 +84,19 @@ do-install:
 		${WRKDIR}/sms_gateway
 	${INSTALL_SCRIPT} ${WRKDIR}/sms_gateway \
 		${STAGEDIR}${PREFIX}/etc/rc.d/sms_gateway
+	${INSTALL_SCRIPT} ${WRKSRC}/hw/FreeBSD/newsyslog/sms-gateway-newsyslog \
+		${STAGEDIR}${PREFIX}/libexec/sms-gateway-newsyslog
+	${INSTALL_DATA} ${WRKDIR}/sms-gateway-newsyslog.conf \
+		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/sms-gateway.conf.sample
 
 post-install:
 	cd ${STAGEDIR}${PREFIX} && \
 		${FIND} ${WWWDIR_REL} -type f ! -path ${WWWDIR_REL}/config/local.php.sample | \
 		${SORT} >> ${TMPPLIST}
 	${ECHO_CMD} "@sample ${WWWDIR_REL}/config/local.php.sample" >> ${TMPPLIST}
+	${ECHO_CMD} "@sample etc/newsyslog.conf.d/sms-gateway.conf.sample" >> ${TMPPLIST}
 	${ECHO_CMD} "@dir(www,www,0750) ${SMS_GATEWAY_DBDIR}" >> ${TMPPLIST}
+	${ECHO_CMD} "@dir(root,www,0750) ${SMS_GATEWAY_LOGDIR}" >> ${TMPPLIST}
 
 post-install-APACHE-on:
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/apache24/Includes

@@ -18,6 +18,29 @@ final class Config
     {
     }
 
+    public static function fromRoot(string $rootDir): self
+    {
+        $configFile = $rootDir . DIRECTORY_SEPARATOR . 'config' . DIRECTORY_SEPARATOR . 'local.php';
+        if (!is_file($configFile)) {
+            $configFile = $rootDir . DIRECTORY_SEPARATOR . 'config' . DIRECTORY_SEPARATOR . 'local.php.example';
+        }
+
+        $values = require $configFile;
+        if (!is_array($values)) {
+            $values = [];
+        }
+
+        $rcConfigFile = $rootDir . DIRECTORY_SEPARATOR . 'config' . DIRECTORY_SEPARATOR . 'rc.conf.local.php';
+        if (is_file($rcConfigFile)) {
+            $rcValues = require $rcConfigFile;
+            if (is_array($rcValues)) {
+                $values = array_merge($values, $rcValues);
+            }
+        }
+
+        return new self($values);
+    }
+
     public function dongleUrl(): string
     {
         return rtrim((string) ($this->values['dongle_url'] ?? 'http://192.168.8.1/'), '/') . '/';
@@ -141,8 +164,28 @@ final class Config
         );
     }
 
+    public function readLogFile(): ?string
+    {
+        return $this->nullablePath($this->values['read_logfile'] ?? null);
+    }
+
+    public function sendLogFile(): ?string
+    {
+        return $this->nullablePath($this->values['send_logfile'] ?? null);
+    }
+
     public function tokenFile(): string
     {
         return (string) ($this->values['token_file'] ?? dirname(__DIR__) . '/config/tokens.json');
+    }
+
+    private function nullablePath(mixed $value): ?string
+    {
+        if ($value === null || is_array($value)) {
+            return null;
+        }
+
+        $path = trim((string) $value);
+        return $path === '' ? null : $path;
     }
 }

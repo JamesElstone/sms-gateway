@@ -15,12 +15,7 @@ use SmsGateway\Http\JsonResponse;
 
 require dirname(__DIR__) . '/src/autoload.php';
 
-$configFile = dirname(__DIR__) . '/config/local.php';
-if (!is_file($configFile)) {
-    $configFile = dirname(__DIR__) . '/config/local.php.example';
-}
-
-$app = new App(new Config(require $configFile));
+$app = new App(Config::fromRoot(dirname(__DIR__)));
 $headers = function_exists('getallheaders') ? getallheaders() : [];
 foreach (['HTTP_AUTHORIZATION' => 'Authorization', 'HTTP_X_SMS_GATEWAY_TOKEN' => 'X-SMS-Gateway-Token'] as $serverKey => $headerName) {
     if (isset($_SERVER[$serverKey]) && !isset($headers[$headerName])) {

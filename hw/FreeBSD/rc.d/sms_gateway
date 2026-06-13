@@ -18,6 +18,7 @@
 # sms_gateway_enable="YES"
 # sms_gateway_device_type="huawei-lte"
 # sms_gateway_target="hilink"
+# sms_gateway_sync_enable="YES"
 # lte_route_enable="NO"
 #
 
@@ -37,12 +38,26 @@ load_rc_config "$name"
 : ${sms_gateway_device_type:="huawei-lte"}
 : ${sms_gateway_target:="hilink"}
 : ${sms_gateway_start_delay:="8"}
+: ${sms_gateway_sync_enable:="YES"}
+: ${sms_gateway_sync_user:="www"}
+: ${sms_gateway_sync_group:="www"}
+: ${sms_gateway_sync_interval:="10"}
+: ${sms_gateway_sync_php:="/usr/local/bin/php"}
+: ${sms_gateway_sync_daemon:="/usr/sbin/daemon"}
+: ${sms_gateway_sync_script:="${sms_gateway_root}/src/Service/sms-gateway-sync.php"}
+: ${sms_gateway_sync_pidfile:="/var/run/sms_gateway_sync.pid"}
+: ${sms_gateway_log_dir:="/var/log/sms-gateway"}
+: ${sms_gateway_sync_logfile:="${sms_gateway_log_dir}/sync.log"}
+: ${sms_gateway_read_logfile:="${sms_gateway_log_dir}/read.log"}
+: ${sms_gateway_send_logfile:="${sms_gateway_log_dir}/send.log"}
+: ${sms_gateway_php_config:="${sms_gateway_root}/config/rc.conf.local.php"}
 : ${lte_route_enable:="NO"}
 
 start_cmd="sms_gateway_start"
 status_cmd="sms_gateway_status"
-stop_cmd=":"
-extra_commands="status"
+stop_cmd="sms_gateway_stop"
+logrotate_cmd="sms_gateway_logrotate"
+extra_commands="status logrotate"
 
 sms_gateway_validate_token()
 {
@@ -98,12 +113,19 @@ sms_gateway_start()
 	fi
 
 	echo "Starting ${name}: ${sms_gateway_device_type} target ${sms_gateway_target}."
-	"$script" --service --target "$sms_gateway_target" "$route_arg"
+	"$script" --service --target "$sms_gateway_target" "$route_arg" || return 1
+
+	sms_gateway_prepare_logs || return 1
+	sms_gateway_write_php_config || return 1
+	sms_gateway_sync_start
 }
 
 sms_gateway_status()
 {
-	local script
+	local script status_result sync_result
+
+	status_result=0
+	sync_result=0
 
 	script="$(sms_gateway_install_script)" || return 1
 	if [ ! -x "$script" ]; then
@@ -111,7 +133,247 @@ sms_gateway_status()
 		return 1
 	fi
 
-	"$script" --status
+	"$script" --status || status_result="$?"
+
+	if checkyesno sms_gateway_sync_enable; then
+		sms_gateway_sync_status || sync_result="$?"
+	else
+		echo "${name} sync is disabled."
+	fi
+
+	if [ "$status_result" -ne 0 ]; then
+		return "$status_result"
+	fi
+
+	return "$sync_result"
+}
+
+sms_gateway_stop()
+{
+	sms_gateway_sync_stop
+}
+
+sms_gateway_logrotate()
+{
+	if ! checkyesno sms_gateway_sync_enable; then
+		echo "${name} sync is disabled."
+		return 0
+	fi
+
+	if ! sms_gateway_sync_is_running; then
+		sms_gateway_prepare_logs || return 1
+		echo "${name} sync is not running; log file prepared."
+		return 0
+	fi
+
+	sms_gateway_sync_stop || return 1
+	sms_gateway_sync_start
+}
+
+sms_gateway_sync_validate_interval()
+{
+	case "$sms_gateway_sync_interval" in
+	""|*[!0123456789]*|0)
+		warn "sms_gateway_sync_interval must be a positive integer: $sms_gateway_sync_interval"
+		return 1
+		;;
+	esac
+
+	return 0
+}
+
+sms_gateway_prepare_log_file()
+{
+	local created_dir logfile log_dir
+
+	logfile="$1"
+	if [ -z "$logfile" ]; then
+		return 0
+	fi
+
+	created_dir=0
+	log_dir="$sms_gateway_log_dir"
+	case "$logfile" in
+	*/*)
+		log_dir="${logfile%/*}"
+		;;
+	esac
+
+	if [ ! -d "$log_dir" ]; then
+		echo "Creating ${name} log directory: $log_dir"
+		mkdir -p "$log_dir" || return 1
+		created_dir=1
+	fi
+
+	if [ "$created_dir" -eq 1 ] || [ "$log_dir" = "$sms_gateway_log_dir" ]; then
+		chown root:"$sms_gateway_sync_group" "$log_dir" || return 1
+		chmod 0750 "$log_dir" || return 1
+	fi
+
+	if [ ! -e "$logfile" ]; then
+		: > "$logfile" || return 1
+	fi
+
+	chown "$sms_gateway_sync_user":"$sms_gateway_sync_group" "$logfile" || return 1
+	chmod 0640 "$logfile" || return 1
+}
+
+sms_gateway_prepare_logs()
+{
+	sms_gateway_prepare_log_file "$sms_gateway_sync_logfile" || return 1
+	sms_gateway_prepare_log_file "$sms_gateway_read_logfile" || return 1
+	sms_gateway_prepare_log_file "$sms_gateway_send_logfile" || return 1
+}
+
+sms_gateway_php_escape()
+{
+	printf '%s' "$1" | sed "s/\\\\/\\\\\\\\/g; s/'/\\\\'/g"
+}
+
+sms_gateway_write_php_config()
+{
+	local config_dir read_log send_log tmp
+
+	config_dir="${sms_gateway_php_config%/*}"
+	if [ ! -d "$config_dir" ]; then
+		warn "missing SMS Gateway config directory: $config_dir"
+		return 1
+	fi
+
+	read_log="$(sms_gateway_php_escape "$sms_gateway_read_logfile")"
+	send_log="$(sms_gateway_php_escape "$sms_gateway_send_logfile")"
+	tmp="${sms_gateway_php_config}.$$"
+
+	{
+		printf '%s\n' '<?php'
+		printf '%s\n' 'return ['
+		printf "    'read_logfile' => '%s',\n" "$read_log"
+		printf "    'send_logfile' => '%s',\n" "$send_log"
+		printf '%s\n' '];'
+	} > "$tmp" || return 1
+
+	chown root:"$sms_gateway_sync_group" "$tmp" || {
+		rm -f "$tmp"
+		return 1
+	}
+	chmod 0640 "$tmp" || {
+		rm -f "$tmp"
+		return 1
+	}
+	mv -f "$tmp" "$sms_gateway_php_config" || {
+		rm -f "$tmp"
+		return 1
+	}
+}
+
+sms_gateway_sync_read_pid()
+{
+	[ -f "$sms_gateway_sync_pidfile" ] || return 1
+
+	sms_gateway_sync_pid="$(sed -n '1p' "$sms_gateway_sync_pidfile" 2>/dev/null || true)"
+	case "$sms_gateway_sync_pid" in
+	""|*[!0123456789]*)
+		return 1
+		;;
+	esac
+
+	return 0
+}
+
+sms_gateway_sync_is_running()
+{
+	sms_gateway_sync_read_pid || return 1
+	kill -0 "$sms_gateway_sync_pid" >/dev/null 2>&1
+}
+
+sms_gateway_sync_start()
+{
+	if ! checkyesno sms_gateway_sync_enable; then
+		echo "${name} sync is disabled."
+		return 0
+	fi
+
+	if sms_gateway_sync_is_running; then
+		echo "${name} sync already running as pid $sms_gateway_sync_pid."
+		return 0
+	fi
+
+	if [ -f "$sms_gateway_sync_pidfile" ]; then
+		warn "removing stale sync pidfile: $sms_gateway_sync_pidfile"
+		rm -f "$sms_gateway_sync_pidfile"
+	fi
+
+	sms_gateway_sync_validate_interval || return 1
+	sms_gateway_prepare_logs || return 1
+	sms_gateway_write_php_config || return 1
+
+	if [ ! -x "$sms_gateway_sync_php" ]; then
+		warn "missing executable PHP interpreter: $sms_gateway_sync_php"
+		return 1
+	fi
+
+	if [ ! -x "$sms_gateway_sync_daemon" ]; then
+		warn "missing executable daemon utility: $sms_gateway_sync_daemon"
+		return 1
+	fi
+
+	if [ ! -f "$sms_gateway_sync_script" ]; then
+		warn "missing SMS sync service script: $sms_gateway_sync_script"
+		return 1
+	fi
+
+	echo "Starting ${name} sync."
+	"$sms_gateway_sync_daemon" \
+		-p "$sms_gateway_sync_pidfile" \
+		-o "$sms_gateway_sync_logfile" \
+		-u "$sms_gateway_sync_user" \
+		"$sms_gateway_sync_php" "$sms_gateway_sync_script" \
+		--interval "$sms_gateway_sync_interval"
+}
+
+sms_gateway_sync_status()
+{
+	if sms_gateway_sync_is_running; then
+		echo "${name} sync is running as pid $sms_gateway_sync_pid."
+		return 0
+	fi
+
+	echo "${name} sync is not running."
+	return 1
+}
+
+sms_gateway_sync_stop()
+{
+	local n
+
+	if ! checkyesno sms_gateway_sync_enable; then
+		echo "${name} sync is disabled."
+		return 0
+	fi
+
+	if ! sms_gateway_sync_is_running; then
+		if [ -f "$sms_gateway_sync_pidfile" ]; then
+			warn "removing stale sync pidfile: $sms_gateway_sync_pidfile"
+			rm -f "$sms_gateway_sync_pidfile"
+		fi
+		echo "${name} sync is not running."
+		return 0
+	fi
+
+	echo "Stopping ${name} sync."
+	kill "$sms_gateway_sync_pid" || return 1
+
+	n=0
+	while kill -0 "$sms_gateway_sync_pid" >/dev/null 2>&1; do
+		n=$((n + 1))
+		if [ "$n" -ge 10 ]; then
+			warn "${name} sync did not stop after 10 seconds"
+			return 1
+		fi
+		sleep 1
+	done
+
+	rm -f "$sms_gateway_sync_pidfile"
 }
 
 run_rc_command "$1"

@@ -12,6 +12,7 @@ declare(strict_types=1);
 namespace SmsGateway;
 
 use SmsGateway\Http\Response;
+use SmsGateway\Logging\TextFileLogger;
 use SmsGateway\Lte\LteApiException;
 use SmsGateway\Lte\LteModemClient;
 use SmsGateway\Lte\LteTransportException;
@@ -85,52 +86,68 @@ final class App
             return Response::json(404, ['status' => 'unable_to_send', 'message' => 'Unknown endpoint']);
         }
 
+        $mobile = rawurldecode($matches[1]);
         $auth = (new FileTokenAuthorizer($this->config->tokenFile()))->authorize($headers, $clientIp);
         if (!$auth->allowed) {
-            return Response::json($auth->httpStatus, [
+            $response = Response::json($auth->httpStatus, [
                 'status' => 'unauthorised',
                 'message' => $auth->message,
             ]);
+            $this->logSend($auth->tokenName, $clientIp, $mobile, $response, $body);
+            return $response;
         }
 
-        $mobile = rawurldecode($matches[1]);
         if (!$this->isPlausibleMobileNumber($mobile)) {
-            return Response::json(400, ['status' => 'unable_to_send', 'message' => 'Invalid mobile number']);
+            $response = Response::json(400, ['status' => 'unable_to_send', 'message' => 'Invalid mobile number']);
+            $this->logSend($auth->tokenName, $clientIp, $mobile, $response, $body);
+            return $response;
         }
 
         if ($body === '') {
-            return Response::json(400, ['status' => 'unable_to_send', 'message' => 'SMS payload is empty']);
+            $response = Response::json(400, ['status' => 'unable_to_send', 'message' => 'SMS payload is empty']);
+            $this->logSend($auth->tokenName, $clientIp, $mobile, $response, $body);
+            return $response;
         }
 
         if (strlen($body) > $this->config->maxMessageBytes()) {
-            return Response::json(413, ['status' => 'unable_to_send', 'message' => 'SMS payload is too large']);
+            $response = Response::json(413, ['status' => 'unable_to_send', 'message' => 'SMS payload is too large']);
+            $this->logSend($auth->tokenName, $clientIp, $mobile, $response, $body);
+            return $response;
         }
 
         $gateway = new SmsGateway($this->modemClient());
 
         try {
             $result = $gateway->send($mobile, $body);
-            return Response::json($result->httpStatus, $result->payload);
+            $response = Response::json($result->httpStatus, $result->payload);
+            $this->logSend($auth->tokenName, $clientIp, $mobile, $response, $body);
+            return $response;
         } catch (LteApiException $exception) {
             $status = StatusMapper::fromLteApiException($exception);
-            return Response::json($status->httpStatus, [
+            $response = Response::json($status->httpStatus, [
                 'status' => $status->status,
                 'mobile' => $mobile,
                 'message' => $status->message,
                 'lte_error_code' => $exception->getLteCode(),
             ]);
+            $this->logSend($auth->tokenName, $clientIp, $mobile, $response, $body);
+            return $response;
         } catch (LteTransportException $exception) {
-            return Response::json(503, [
+            $response = Response::json(503, [
                 'status' => 'device_missing',
                 'mobile' => $mobile,
                 'message' => $exception->getMessage(),
             ]);
+            $this->logSend($auth->tokenName, $clientIp, $mobile, $response, $body);
+            return $response;
         } catch (\Throwable $exception) {
-            return Response::json(502, [
+            $response = Response::json(502, [
                 'status' => 'lte_error',
                 'mobile' => $mobile,
                 'message' => $exception->getMessage(),
             ]);
+            $this->logSend($auth->tokenName, $clientIp, $mobile, $response, $body);
+            return $response;
         }
     }
 
@@ -148,6 +165,11 @@ final class App
             ]);
         }
 
+        $all = false;
+        $markRead = false;
+        $limit = 0;
+        $search = null;
+
         try {
             $all = $this->queryHasFlag($query, 'all');
             $markRead = !$peek && (!$all || $this->queryHasFlag($query, 'mark-read'));
@@ -155,7 +177,7 @@ final class App
             $search = $all ? null : $this->readSearchTerm($query);
             $messages = $this->messageStore()->readForToken($auth->tokenName, $search, $limit, $all, $markRead);
 
-            return Response::json(200, [
+            $response = Response::json(200, [
                 'status' => 'ok',
                 'mode' => $peek ? 'peek' : ($all ? 'all' : 'unread'),
                 'token' => $auth->tokenName,
@@ -166,16 +188,22 @@ final class App
                 'count' => count($messages),
                 'messages' => $messages,
             ]);
+            $this->logRead($auth->tokenName, $clientIp, $response->payload['mode'], 'ok', $markRead, $all, $limit, $search, $messages);
+            return $response;
         } catch (\InvalidArgumentException $exception) {
-            return Response::json(400, [
+            $response = Response::json(400, [
                 'status' => 'invalid_request',
                 'message' => $exception->getMessage(),
             ]);
+            $this->logRead($auth->tokenName, $clientIp, $peek ? 'peek' : ($all ? 'all' : 'unread'), 'invalid_request', $markRead, $all, $limit, $search, []);
+            return $response;
         } catch (\Throwable $exception) {
-            return Response::json(500, [
+            $response = Response::json(500, [
                 'status' => 'sms_cache_error',
                 'message' => $exception->getMessage(),
             ]);
+            $this->logRead($auth->tokenName, $clientIp, $peek ? 'peek' : ($all ? 'all' : 'unread'), 'sms_cache_error', $markRead, $all, $limit, $search, []);
+            return $response;
         }
     }
 
@@ -190,27 +218,35 @@ final class App
             ]);
         }
 
+        $messageIds = [];
+
         try {
             $messageIds = $this->ackMessageIds($body);
             $result = $this->messageStore()->acknowledge($auth->tokenName, $messageIds);
 
-            return Response::json(200, [
+            $response = Response::json(200, [
                 'status' => 'acknowledged',
                 'token' => $auth->tokenName,
                 'acknowledged_count' => count($result['acknowledged']),
                 'acknowledged' => $result['acknowledged'],
                 'unknown' => $result['unknown'],
             ]);
+            $this->logRead($auth->tokenName, $clientIp, 'ack', 'acknowledged', true, false, 0, null, $result['acknowledged']);
+            return $response;
         } catch (\InvalidArgumentException $exception) {
-            return Response::json(400, [
+            $response = Response::json(400, [
                 'status' => 'invalid_request',
                 'message' => $exception->getMessage(),
             ]);
+            $this->logRead($auth->tokenName, $clientIp, 'ack', 'invalid_request', true, false, 0, null, $messageIds);
+            return $response;
         } catch (\Throwable $exception) {
-            return Response::json(500, [
+            $response = Response::json(500, [
                 'status' => 'sms_cache_error',
                 'message' => $exception->getMessage(),
             ]);
+            $this->logRead($auth->tokenName, $clientIp, 'ack', 'sms_cache_error', true, false, 0, null, $messageIds);
+            return $response;
         }
     }
 
@@ -474,6 +510,66 @@ final class App
     private function messageStore(): SmsMessageStore
     {
         return SmsMessageStore::fromConfig($this->config);
+    }
+
+    private function logSend(?string $tokenName, string $clientIp, string $mobile, Response $response, string $payload): void
+    {
+        (new TextFileLogger($this->config->sendLogFile()))->log('send', [
+            'token' => $tokenName,
+            'ip' => $clientIp,
+            'mobile' => $mobile,
+            'status' => $response->payload['status'] ?? '',
+            'http_status' => $response->statusCode,
+            'bytes' => strlen($payload),
+            'payload' => $payload,
+        ]);
+    }
+
+    /** @param array<int, mixed> $messagesOrIds */
+    private function logRead(
+        string $tokenName,
+        string $clientIp,
+        string $mode,
+        string $status,
+        bool $markedRead,
+        bool $all,
+        int $limit,
+        ?string $search,
+        array $messagesOrIds
+    ): void {
+        (new TextFileLogger($this->config->readLogFile()))->log('read', [
+            'token' => $tokenName,
+            'ip' => $clientIp,
+            'mode' => $mode,
+            'status' => $status,
+            'marked_read' => $markedRead,
+            'all' => $all,
+            'limit' => $limit,
+            'search' => $search,
+            'count' => count($messagesOrIds),
+            'ids' => $this->messageIds($messagesOrIds),
+        ]);
+    }
+
+    /** @param array<int, mixed> $messagesOrIds */
+    private function messageIds(array $messagesOrIds): array
+    {
+        $ids = [];
+        foreach ($messagesOrIds as $item) {
+            if (is_array($item)) {
+                $id = $item['id'] ?? null;
+                if (!is_array($id) && $id !== null && trim((string) $id) !== '') {
+                    $ids[] = (string) $id;
+                }
+                continue;
+            }
+
+            if ($item !== null && trim((string) $item) !== '') {
+                $ids[] = (string) $item;
+            }
+        }
+
+        return $ids;
     }
 
     /** @param array<string, mixed> $query */

@@ -1,0 +1,3 @@
+%%SMS_GATEWAY_LOGDIR%%/sync.log	www:www	640	14	*	$D0	ZCR	%%PREFIX%%/libexec/sms-gateway-newsyslog
+%%SMS_GATEWAY_LOGDIR%%/read.log	www:www	640	14	*	$D0	ZN
+%%SMS_GATEWAY_LOGDIR%%/send.log	www:www	640	14	*	$D0	ZN

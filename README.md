@@ -170,9 +170,11 @@ X-SMS-Gateway-Token: {token}
 ```
 
 Returns cached SMS inbox messages not yet read by the calling token and marks
-the returned message IDs read for that token. Run
-`bin/sms-gateway-sync.php --interval 10` in the background to keep the local
-SQLite cache synchronized from the LTE modem inbox.
+the returned message IDs read for that token. On FreeBSD, the `sms_gateway`
+rc.d service starts the sync poller. For manual foreground testing, run
+`php src/Service/sms-gateway-sync.php --interval 10` from the application root.
+FreeBSD read activity is also logged to `/var/log/sms-gateway/read.log` by
+default.
 
 Useful read forms:
 
@@ -191,6 +193,8 @@ X-SMS-Gateway-Token: {token}
 The request body is sent as the SMS payload.
 Example mobile numbers in this documentation use Ofcom's drama range:
 `07700 900000` to `07700 900999`.
+FreeBSD send activity is logged to `/var/log/sms-gateway/send.log` by default;
+payloads are URL-encoded in the log.
 
 Responses are JSON:
 

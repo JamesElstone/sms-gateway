@@ -129,9 +129,13 @@ string such as `"true"` or `"false"`.
 
 ## Read SMS
 
-The read API returns messages from the local SMS cache. Run
-`bin/sms-gateway-sync.php` in the background to keep that cache synchronized
-from the LTE modem inbox.
+The read API returns messages from the local SMS cache. On FreeBSD, the
+`sms_gateway` rc.d service starts the sync poller. For manual foreground
+testing, run `php src/Service/sms-gateway-sync.php --interval 10` from the
+application root.
+
+On FreeBSD, authenticated read, peek, and ack activity is logged to
+`/var/log/sms-gateway/read.log` by default.
 
 Each enabled token has its own read log, keyed by the token `name` in
 `config/tokens.json`.
@@ -237,6 +241,9 @@ POST /send/{mobile-number}
 
 The mobile number is part of the URL path. The request body is sent as the SMS
 message. The example number below is from Ofcom's drama range.
+
+On FreeBSD, send attempts are logged to `/var/log/sms-gateway/send.log` by
+default. SMS payloads are URL-encoded in the text log.
 
 ```sh
 curl -i \

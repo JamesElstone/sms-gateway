@@ -101,6 +101,30 @@ sudo chown www:www /var/db/sms-gateway
 sudo chmod 0750 /var/db/sms-gateway
 ```
 
+Create the default service log directory:
+
+```sh
+sudo mkdir -p /var/log/sms-gateway
+sudo chown root:www /var/log/sms-gateway
+sudo chmod 0750 /var/log/sms-gateway
+```
+
+The `sms_gateway` rc.d service creates these log files as `www:www 0640` on
+start:
+
+```text
+/var/log/sms-gateway/sync.log
+/var/log/sms-gateway/read.log
+/var/log/sms-gateway/send.log
+```
+
+The read and send log paths can be changed in `/etc/rc.conf`:
+
+```sh
+sms_gateway_read_logfile="/var/log/sms-gateway/read.log"
+sms_gateway_send_logfile="/var/log/sms-gateway/send.log"
+```
+
 Then set `database_dsn` in `config/local.php` to the `/var/db/sms-gateway`
 path. The application creates the schema automatically on first use.
 
@@ -115,21 +139,33 @@ Run one sync pass:
 
 ```sh
 cd /usr/local/sms-gateway
-php bin/sms-gateway-sync.php --once
+sudo -u www php src/Service/sms-gateway-sync.php --once
 ```
 
 Run the poller in the foreground at 10 second intervals:
 
 ```sh
 cd /usr/local/sms-gateway
-php bin/sms-gateway-sync.php --interval 10
+sudo -u www php src/Service/sms-gateway-sync.php --interval 10
 ```
 
-The sync service polls the LTE modem inbox count, caches inbox messages in
-SQLite, marks cached modem messages read, and deletes modem copies only when
-all enabled tokens have read them. If local or SIM storage reaches the
-configured pressure threshold, it deletes the oldest cached modem-resident
+On FreeBSD, the `sms_gateway` rc.d service starts the sync poller after LTE
+hardware setup. The sync service polls the LTE modem inbox count, caches inbox
+messages in SQLite, marks cached modem messages read, and deletes modem copies
+only when all enabled tokens have read them. If local or SIM storage reaches
+the configured pressure threshold, it deletes the oldest cached modem-resident
 messages in batches of 10.
+
+The FreeBSD port installs a newsyslog policy at:
+
+```text
+/usr/local/etc/newsyslog.conf.d/sms-gateway.conf
+```
+
+It rotates `/var/log/sms-gateway/sync.log`, `/var/log/sms-gateway/read.log`,
+and `/var/log/sms-gateway/send.log` daily and keeps 14 compressed archives.
+After rotating `sync.log`, it calls `service sms_gateway logrotate` so the sync
+poller reopens the log.
 
 The storage pressure threshold is configured in `config/local.php`:
 

@@ -51,6 +51,8 @@ SMS_GATEWAY_CONFIG_DIR="${SMS_GATEWAY_CONFIG_DIR:-$SMS_GATEWAY_ROOT/config}"
 SMS_GATEWAY_LOCAL_CONFIG="${SMS_GATEWAY_LOCAL_CONFIG:-$SMS_GATEWAY_CONFIG_DIR/local.php}"
 SMS_GATEWAY_TOKEN_FILE="${SMS_GATEWAY_TOKEN_FILE:-$SMS_GATEWAY_CONFIG_DIR/tokens.json}"
 SMS_GATEWAY_DB_DIR="${SMS_GATEWAY_DB_DIR:-/var/db/sms-gateway}"
+SMS_GATEWAY_LOG_DIR="${SMS_GATEWAY_LOG_DIR:-/var/log/sms-gateway}"
+SMS_GATEWAY_LOG_GROUP="${SMS_GATEWAY_LOG_GROUP:-www}"
 HUAWEI_VENDOR_ID="0x12d1"
 HUAWEI_STORAGE_PRODUCT_ID="0x1f01"
 HUAWEI_NCM_PRODUCT_ID="0x155e"
@@ -1583,6 +1585,17 @@ install_sms_gateway_rc_service() {
     chmod 555 "$SMS_GATEWAY_RC_DEST"
 }
 
+ensure_sms_gateway_log_dir() {
+    if [ ! -d "$SMS_GATEWAY_LOG_DIR" ]; then
+        log "Creating SMS Gateway log directory: $SMS_GATEWAY_LOG_DIR"
+        mkdir -p "$SMS_GATEWAY_LOG_DIR"
+    fi
+
+    chown root:"$SMS_GATEWAY_LOG_GROUP" "$SMS_GATEWAY_LOG_DIR"
+    chmod 0750 "$SMS_GATEWAY_LOG_DIR"
+    log "SMS Gateway log directory present: $SMS_GATEWAY_LOG_DIR"
+}
+
 check_sms_gateway_app_config() {
     [ "$SERVICE_RUN" -eq 0 ] || return 0
 
@@ -1600,6 +1613,8 @@ check_sms_gateway_app_config() {
     else
         log "SMS Gateway SQLite directory present: $SMS_GATEWAY_DB_DIR"
     fi
+
+    ensure_sms_gateway_log_dir
 
     if [ ! -f "$SMS_GATEWAY_TOKEN_FILE" ]; then
         log "SMS Gateway token file is missing: $SMS_GATEWAY_TOKEN_FILE"

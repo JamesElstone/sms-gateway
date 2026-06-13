@@ -1,0 +1,18 @@
+#!/bin/sh
+
+# Copyright (c) 2026, James Elstone
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# This file is part of SMS Gateway:
+# https://github.com/JamesElstone/sms-gateway
+#
+# See LICENSE for details.
+
+PATH="/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin"
+export PATH
+
+if [ -x /usr/local/etc/rc.d/sms_gateway ]; then
+    /usr/local/etc/rc.d/sms_gateway logrotate >/dev/null 2>&1 || true
+fi
+
+exit 0

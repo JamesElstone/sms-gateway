@@ -26,5 +26,7 @@ return [
     'sms_sync_lock_file' => getenv('SMS_GATEWAY_SMS_SYNC_LOCK_FILE') ?: sys_get_temp_dir() . '/sms-gateway-sms-sync.lock',
     'sms_storage_pressure_threshold' => (float) (getenv('SMS_GATEWAY_SMS_STORAGE_PRESSURE_THRESHOLD') ?: 0.9),
     'sms_pressure_delete_batch_size' => (int) (getenv('SMS_GATEWAY_SMS_PRESSURE_DELETE_BATCH_SIZE') ?: 10),
+    'read_logfile' => getenv('SMS_GATEWAY_READ_LOGFILE') ?: null,
+    'send_logfile' => getenv('SMS_GATEWAY_SEND_LOGFILE') ?: null,
     'token_file' => getenv('SMS_GATEWAY_TOKEN_FILE') ?: dirname(__DIR__) . '/config/tokens.json',
 ];

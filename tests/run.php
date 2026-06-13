@@ -31,11 +31,6 @@ if ($exitCode !== 0) {
     exit($exitCode);
 }
 
-passthru('php -l ' . escapeshellarg(dirname(__DIR__) . '/bin/sms-gateway-sync.php'), $exitCode);
-if ($exitCode !== 0) {
-    exit($exitCode);
-}
-
 function assert_test(bool $condition, string $message): void
 {
     if (!$condition) {
@@ -101,11 +96,23 @@ $cachePath = $testPrefix . '.cache.json';
 $forceStatePath = $testPrefix . '.force.json';
 $tokenPath = $testPrefix . '.tokens.json';
 $dbPath = $testPrefix . '.sqlite3';
+$readLogPath = $testPrefix . '.read.log';
+$sendLogPath = $testPrefix . '.send.log';
 @unlink($lockPath);
 @unlink($cachePath);
 @unlink($forceStatePath);
 @unlink($tokenPath);
 @unlink($dbPath);
+@unlink($readLogPath);
+@unlink($sendLogPath);
+
+$configRoot = $testPrefix . '-config-root';
+$configDir = $configRoot . DIRECTORY_SEPARATOR . 'config';
+mkdir($configDir, 0770, true);
+file_put_contents($configDir . DIRECTORY_SEPARATOR . 'local.php', "<?php\nreturn ['read_logfile' => 'local-read.log'];\n");
+file_put_contents($configDir . DIRECTORY_SEPARATOR . 'rc.conf.local.php', "<?php\nreturn ['read_logfile' => 'rc-read.log', 'send_logfile' => 'rc-send.log'];\n");
+$overlayConfig = SmsGateway\Config::fromRoot($configRoot);
+assert_test($overlayConfig->readLogFile() === 'rc-read.log' && $overlayConfig->sendLogFile() === 'rc-send.log', 'rc.conf config overlay failed');
 
 file_put_contents($tokenPath, json_encode([
     'tokens' => [
@@ -164,15 +171,18 @@ $config = new SmsGateway\Config([
     'database_dsn' => 'sqlite:' . $dbPath,
     'sms_sync_lock_file' => $testPrefix . '.sms-sync.lock',
     'sms_read_default_limit' => 100,
+    'read_logfile' => $readLogPath,
+    'send_logfile' => $sendLogPath,
 ]);
 
 $app = new SmsGateway\App($config);
+$pingHeaders = ['X-SMS-Gateway-Token' => 'ping-secret-token'];
 
 $response = $app->handle(
     'GET',
     '/sms-gateway/ping',
     '',
-    ['X-SMS-Gateway-Token' => 'ping-secret-token'],
+    $pingHeaders,
     '127.0.0.1'
 );
 if (
@@ -216,6 +226,43 @@ if ($response->statusCode !== 401 || ($response->payload['status'] ?? null) !== 
     fwrite(STDERR, "Missing token ping response failed\n");
     exit(1);
 }
+
+$response = $app->handle(
+    'POST',
+    '/sms-gateway/send/not-a-mobile',
+    "Hello from SMS\nPound: £",
+    $pingHeaders,
+    '127.0.0.1'
+);
+assert_test($response->statusCode === 400 && ($response->payload['status'] ?? null) === 'unable_to_send', 'Invalid mobile send response failed');
+$sendLog = file_get_contents($sendLogPath);
+assert_test(
+    is_string($sendLog)
+    && str_contains($sendLog, ' send ')
+    && str_contains($sendLog, 'token=ping-test')
+    && str_contains($sendLog, 'ip=127.0.0.1')
+    && str_contains($sendLog, 'mobile=not-a-mobile')
+    && str_contains($sendLog, 'status=unable_to_send')
+    && str_contains($sendLog, 'http_status=400')
+    && str_contains($sendLog, 'payload=Hello%20from%20SMS%0APound%3A%20%C2%A3'),
+    'Send log line failed'
+);
+
+$unwritableLogConfig = new SmsGateway\Config([
+    'dongle_url' => 'http://127.0.0.1:9/',
+    'curl_timeout_seconds' => 1,
+    'token_file' => $tokenPath,
+    'send_logfile' => sys_get_temp_dir(),
+]);
+$unwritableLogApp = new SmsGateway\App($unwritableLogConfig);
+$response = $unwritableLogApp->handle(
+    'POST',
+    '/sms-gateway/send/not-a-mobile',
+    'still logs best effort',
+    $pingHeaders,
+    '127.0.0.1'
+);
+assert_test($response->statusCode === 400, 'Unwritable send log path changed API response');
 
 file_put_contents($cachePath, json_encode([
     'created_at_epoch' => time(),
@@ -342,7 +389,6 @@ $store->upsertMessages([
     ],
 ], 'test-device');
 
-$pingHeaders = ['X-SMS-Gateway-Token' => 'ping-secret-token'];
 $ackHeaders = ['X-SMS-Gateway-Token' => 'ack-secret-token'];
 $allHeaders = ['X-SMS-Gateway-Token' => 'all-secret-token'];
 $filterHeaders = ['X-SMS-Gateway-Token' => 'filter-secret-token'];
@@ -350,6 +396,21 @@ $filterHeaders = ['X-SMS-Gateway-Token' => 'filter-secret-token'];
 $response = $app->handle('GET', '/sms-gateway/read/peek/', '', $pingHeaders, '127.0.0.1');
 assert_test($response->statusCode === 200 && ($response->payload['count'] ?? null) === 3, 'Peek unread response failed');
 $firstPeekIds = array_column($response->payload['messages'], 'id');
+$readLog = file_get_contents($readLogPath);
+assert_test(
+    is_string($readLog)
+    && str_contains($readLog, ' read ')
+    && str_contains($readLog, 'token=ping-test')
+    && str_contains($readLog, 'ip=127.0.0.1')
+    && str_contains($readLog, 'mode=peek')
+    && str_contains($readLog, 'status=ok')
+    && str_contains($readLog, 'marked_read=no')
+    && str_contains($readLog, 'all=no')
+    && str_contains($readLog, 'limit=100')
+    && str_contains($readLog, 'count=3')
+    && str_contains($readLog, 'ids=' . implode(',', $firstPeekIds)),
+    'Peek read log line failed'
+);
 
 $response = $app->handle('GET', '/sms-gateway/read/', '', $pingHeaders, '127.0.0.1');
 assert_test($response->statusCode === 200 && ($response->payload['count'] ?? null) === 3 && ($response->payload['marked_read'] ?? null) === true, 'Default read response failed');
@@ -369,6 +430,16 @@ $response = $app->handle(
     '127.0.0.1'
 );
 assert_test($response->statusCode === 200 && ($response->payload['acknowledged_count'] ?? null) === 1, 'Ack response failed');
+$readLog = file_get_contents($readLogPath);
+assert_test(
+    is_string($readLog)
+    && str_contains($readLog, 'mode=ack')
+    && str_contains($readLog, 'status=acknowledged')
+    && str_contains($readLog, 'marked_read=yes')
+    && str_contains($readLog, 'count=1')
+    && str_contains($readLog, 'ids=' . $ackIds[0]),
+    'Ack read log line failed'
+);
 
 $response = $app->handle('GET', '/sms-gateway/read/peek/', '', $ackHeaders, '127.0.0.1');
 assert_test($response->statusCode === 200 && ($response->payload['count'] ?? null) === 2, 'Ack did not mark only supplied message read');
@@ -412,5 +483,11 @@ assert_test($response->statusCode === 200 && ($response->payload['count'] ?? nul
 @unlink($forceStatePath);
 @unlink($tokenPath);
 @unlink($dbPath);
+@unlink($readLogPath);
+@unlink($sendLogPath);
+@unlink($configDir . DIRECTORY_SEPARATOR . 'local.php');
+@unlink($configDir . DIRECTORY_SEPARATOR . 'rc.conf.local.php');
+@rmdir($configDir);
+@rmdir($configRoot);
 
 exit(0);

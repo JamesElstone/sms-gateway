@@ -205,6 +205,34 @@ install-huawei-lte.sh --service --target "$sms_gateway_target" --no-default-rout
 If `lte_route_enable="YES"` is set in `/etc/rc.conf`, the service passes
 `--default-route` instead.
 
+After the hardware setup succeeds, the service starts the SMS cache sync poller
+as `www` with:
+
+```sh
+php /usr/local/sms-gateway/src/Service/sms-gateway-sync.php --interval 10
+```
+
+The poller pidfile defaults to `/var/run/sms_gateway_sync.pid`, and logs default
+to `/var/log/sms-gateway/sync.log`. The service creates the log directory at
+start if it is missing. It also creates `/var/log/sms-gateway/read.log` and
+`/var/log/sms-gateway/send.log` for API read and send audit lines.
+
+The port installs a newsyslog policy at:
+
+```text
+/usr/local/etc/newsyslog.conf.d/sms-gateway.conf
+```
+
+The policy rotates `sync.log`, `read.log`, and `send.log` daily and keeps 14
+compressed archives. After rotating `sync.log`, it calls:
+
+```sh
+service sms_gateway logrotate
+```
+
+That rc.d action restarts only the sync poller so it reopens the log; it does
+not rerun the LTE hardware setup.
+
 The default rc.d settings are:
 
 ```sh
@@ -213,6 +241,14 @@ sms_gateway_platform="$(uname -s)"
 sms_gateway_device_type="huawei-lte"
 sms_gateway_target="hilink"
 sms_gateway_start_delay="8"
+sms_gateway_sync_enable="YES"
+sms_gateway_sync_user="www"
+sms_gateway_sync_interval="10"
+sms_gateway_sync_pidfile="/var/run/sms_gateway_sync.pid"
+sms_gateway_log_dir="/var/log/sms-gateway"
+sms_gateway_sync_logfile="/var/log/sms-gateway/sync.log"
+sms_gateway_read_logfile="/var/log/sms-gateway/read.log"
+sms_gateway_send_logfile="/var/log/sms-gateway/send.log"
 lte_route_enable="NO"
 ```
 
