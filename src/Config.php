@@ -164,6 +164,14 @@ final class Config
         );
     }
 
+    public function smsSyncStateFile(): string
+    {
+        return (string) (
+            $this->values['sms_sync_state_file']
+            ?? sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sms-gateway-sms-sync-state.json'
+        );
+    }
+
     public function readLogFile(): ?string
     {
         return $this->nullablePath($this->values['read_logfile'] ?? null);

@@ -94,6 +94,7 @@ $testPrefix = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sms-gateway-test-' . g
 $lockPath = $testPrefix . '.lock';
 $cachePath = $testPrefix . '.cache.json';
 $forceStatePath = $testPrefix . '.force.json';
+$syncStatePath = $testPrefix . '.sms-sync-state.json';
 $tokenPath = $testPrefix . '.tokens.json';
 $dbPath = $testPrefix . '.sqlite3';
 $readLogPath = $testPrefix . '.read.log';
@@ -101,6 +102,7 @@ $sendLogPath = $testPrefix . '.send.log';
 @unlink($lockPath);
 @unlink($cachePath);
 @unlink($forceStatePath);
+@unlink($syncStatePath);
 @unlink($tokenPath);
 @unlink($dbPath);
 @unlink($readLogPath);
@@ -170,6 +172,7 @@ $config = new SmsGateway\Config([
     'token_file' => $tokenPath,
     'database_dsn' => 'sqlite:' . $dbPath,
     'sms_sync_lock_file' => $testPrefix . '.sms-sync.lock',
+    'sms_sync_state_file' => $syncStatePath,
     'sms_read_default_limit' => 100,
     'read_logfile' => $readLogPath,
     'send_logfile' => $sendLogPath,
@@ -389,6 +392,20 @@ $store->upsertMessages([
     ],
 ], 'test-device');
 
+$stats = $store->stats();
+assert_test(($stats['messages_total'] ?? null) === 3, 'SMS cache message stats failed');
+assert_test(($stats['messages_modem_resident'] ?? null) === 3, 'SMS cache modem resident stats failed');
+
+$syncState = new SmsGateway\Service\SmsSyncState($config);
+$neverRun = $syncState->summary();
+assert_test(($neverRun['status'] ?? null) === 'never_run' && ($neverRun['running'] ?? null) === false, 'SMS sync never-run state failed');
+$syncState->recordStarting(true, 10);
+$runningState = $syncState->summary();
+assert_test(($runningState['running'] ?? null) === true && ($runningState['stale'] ?? null) === false, 'SMS sync running state failed');
+$syncState->recordResult(['status' => 'ok', 'synced' => false], true, 10);
+$idleState = $syncState->summary();
+assert_test(($idleState['status'] ?? null) === 'idle' && ($idleState['last_result']['status'] ?? null) === 'ok', 'SMS sync idle state failed');
+
 $ackHeaders = ['X-SMS-Gateway-Token' => 'ack-secret-token'];
 $allHeaders = ['X-SMS-Gateway-Token' => 'all-secret-token'];
 $filterHeaders = ['X-SMS-Gateway-Token' => 'filter-secret-token'];
@@ -481,6 +498,7 @@ assert_test($response->statusCode === 200 && ($response->payload['count'] ?? nul
 @unlink($lockPath);
 @unlink($cachePath);
 @unlink($forceStatePath);
+@unlink($syncStatePath);
 @unlink($tokenPath);
 @unlink($dbPath);
 @unlink($readLogPath);

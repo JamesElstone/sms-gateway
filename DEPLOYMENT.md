@@ -176,6 +176,14 @@ The storage pressure threshold is configured in `config/local.php`:
 SIM capacity comes from the modem's `SimUsed` and `SimMax` fields. Local modem
 inbox pressure uses `LocalInbox` and `LocalMax`.
 
+The `/sms-gateway/` status endpoint reports the sync poller's heartbeat from
+`sms_sync_state_file`, plus aggregate cache counters from the local database.
+The default state file lives in the system temporary directory:
+
+```php
+'sms_sync_state_file' => sys_get_temp_dir() . '/sms-gateway-sms-sync-state.json',
+```
+
 ## LTE USB Dongle Setup
 
 Use the FreeBSD installer script to detect the Huawei LTE dongle, switch it into

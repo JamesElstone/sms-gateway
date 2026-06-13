@@ -68,9 +68,44 @@ Example successful response shape:
     "name": "E3372",
     "imei": "510563996265102"
   },
+  "service": {
+    "sms_sync": {
+      "status": "idle",
+      "running": true,
+      "stale": false,
+      "message": "SMS sync service heartbeat is recent",
+      "mode": "daemon",
+      "pid": 12345,
+      "last_heartbeat_at": "2026-06-13T22:30:00+00:00",
+      "last_run_at": "2026-06-13T22:30:00+00:00",
+      "seconds_since_heartbeat": 4,
+      "interval_seconds": 10,
+      "sync_pass_running": false,
+      "last_result": {
+        "status": "ok",
+        "synced": false
+      }
+    }
+  },
+  "stats": {
+    "sms_cache": {
+      "messages_total": 12,
+      "messages_modem_resident": 8,
+      "messages_modem_deleted": 4,
+      "read_receipts_total": 17,
+      "tokens_with_reads": 3,
+      "newest_cached_at": "2026-06-13T22:29:57+00:00"
+    }
+  },
   "raw": {}
 }
 ```
+
+`service.sms_sync.status` is `never_run` until the poller writes its first
+state file, `running` during a sync pass, `idle` between daemon polls,
+`completed` after a `--once` run, or `stale` when the heartbeat is older than
+three poll intervals. `sync_pass_running` is based on the sync lock, so it can
+show a live sync even if the last JSON heartbeat is slightly old.
 
 Common error responses include:
 

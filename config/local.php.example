@@ -24,6 +24,7 @@ return [
     'sms_read_max_limit' => (int) (getenv('SMS_GATEWAY_SMS_READ_MAX_LIMIT') ?: 500),
     'sms_sync_page_size' => (int) (getenv('SMS_GATEWAY_SMS_SYNC_PAGE_SIZE') ?: 50),
     'sms_sync_lock_file' => getenv('SMS_GATEWAY_SMS_SYNC_LOCK_FILE') ?: sys_get_temp_dir() . '/sms-gateway-sms-sync.lock',
+    'sms_sync_state_file' => getenv('SMS_GATEWAY_SMS_SYNC_STATE_FILE') ?: sys_get_temp_dir() . '/sms-gateway-sms-sync-state.json',
     'sms_storage_pressure_threshold' => (float) (getenv('SMS_GATEWAY_SMS_STORAGE_PRESSURE_THRESHOLD') ?: 0.9),
     'sms_pressure_delete_batch_size' => (int) (getenv('SMS_GATEWAY_SMS_PRESSURE_DELETE_BATCH_SIZE') ?: 10),
     'read_logfile' => getenv('SMS_GATEWAY_READ_LOGFILE') ?: null,

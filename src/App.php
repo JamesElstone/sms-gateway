@@ -17,6 +17,7 @@ use SmsGateway\Lte\LteApiException;
 use SmsGateway\Lte\LteModemClient;
 use SmsGateway\Lte\LteTransportException;
 use SmsGateway\Security\FileTokenAuthorizer;
+use SmsGateway\Service\SmsSyncState;
 use SmsGateway\Sms\SmsMessageStore;
 
 final class App
@@ -261,24 +262,28 @@ final class App
             $health = $this->modemClient()->health();
             $summary = StatusMapper::summarizeHealth($health);
 
-            return Response::json(200, $summary + ['raw' => $health]);
+            return Response::json(200, $summary + [
+                'service' => $this->serviceStatus(),
+                'stats' => $this->statusStats(),
+                'raw' => $health,
+            ]);
         } catch (LteTransportException $exception) {
             return Response::json(503, [
                 'status' => 'device_missing',
                 'message' => $exception->getMessage(),
-            ]);
+            ] + $this->statusExtras());
         } catch (LteApiException $exception) {
             $status = StatusMapper::fromLteApiException($exception);
             return Response::json($status->httpStatus, [
                 'status' => $status->status,
                 'message' => $status->message,
                 'lte_error_code' => $exception->getLteCode(),
-            ]);
+            ] + $this->statusExtras());
         } catch (\Throwable $exception) {
             return Response::json(502, [
                 'status' => 'lte_error',
                 'message' => $exception->getMessage(),
-            ]);
+            ] + $this->statusExtras());
         }
     }
 
@@ -510,6 +515,44 @@ final class App
     private function messageStore(): SmsMessageStore
     {
         return SmsMessageStore::fromConfig($this->config);
+    }
+
+    /** @return array{service: array<string, mixed>, stats: array<string, mixed>} */
+    private function statusExtras(): array
+    {
+        return [
+            'service' => $this->serviceStatus(),
+            'stats' => $this->statusStats(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function serviceStatus(): array
+    {
+        return [
+            'sms_sync' => (new SmsSyncState($this->config))->summary(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function statusStats(): array
+    {
+        return [
+            'sms_cache' => $this->smsCacheStats(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function smsCacheStats(): array
+    {
+        try {
+            return $this->messageStore()->stats();
+        } catch (\Throwable $exception) {
+            return [
+                'status' => 'unavailable',
+                'message' => $exception->getMessage(),
+            ];
+        }
     }
 
     private function logSend(?string $tokenName, string $clientIp, string $mobile, Response $response, string $payload): void

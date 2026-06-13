@@ -53,9 +53,12 @@ final class SmsGatewaySyncCommand
         );
         $authorizer = new FileTokenAuthorizer($config->tokenFile());
         $sync = new SmsSyncService($config, $store, $client);
+        $state = new SmsSyncState($config);
 
         do {
+            $state->recordStarting(!$once, $interval);
             $result = $sync->syncIfNeeded($authorizer->enabledTokenNames());
+            $state->recordResult($result, !$once, $interval);
             echo json_encode([
                 'datetime' => gmdate(DATE_ATOM),
                 'result' => $result,

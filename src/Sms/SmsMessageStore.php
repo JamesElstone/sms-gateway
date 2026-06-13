@@ -164,6 +164,25 @@ final class SmsMessageStore
         return (int) $this->pdo()->query('SELECT COUNT(*) FROM sms_messages')->fetchColumn();
     }
 
+    /** @return array<string, mixed> */
+    public function stats(): array
+    {
+        $this->initialize();
+
+        return [
+            'messages_total' => $this->countSql('SELECT COUNT(*) FROM sms_messages'),
+            'messages_modem_resident' => $this->countSql('SELECT COUNT(*) FROM sms_messages WHERE modem_index IS NOT NULL AND modem_deleted_at IS NULL'),
+            'messages_modem_deleted' => $this->countSql('SELECT COUNT(*) FROM sms_messages WHERE modem_deleted_at IS NOT NULL'),
+            'messages_without_modem_index' => $this->countSql('SELECT COUNT(*) FROM sms_messages WHERE modem_index IS NULL'),
+            'read_receipts_total' => $this->countSql('SELECT COUNT(*) FROM sms_token_reads'),
+            'tokens_with_reads' => $this->countSql('SELECT COUNT(DISTINCT token_name) FROM sms_token_reads'),
+            'oldest_cached_at' => $this->scalarString('SELECT MIN(cached_at) FROM sms_messages'),
+            'newest_cached_at' => $this->scalarString('SELECT MAX(cached_at) FROM sms_messages'),
+            'newest_updated_at' => $this->scalarString('SELECT MAX(updated_at) FROM sms_messages'),
+            'last_sync_state_update_at' => $this->scalarString('SELECT MAX(updated_at) FROM sms_sync_state'),
+        ];
+    }
+
     public function readForToken(
         string $tokenName,
         ?string $senderSearch,
@@ -307,6 +326,22 @@ final class SmsMessageStore
              VALUES (:state_key, :state_value, :updated_at)'
         );
         $insert->execute(['state_key' => $key, 'state_value' => $value, 'updated_at' => $now]);
+    }
+
+    private function countSql(string $sql): int
+    {
+        return (int) $this->pdo()->query($sql)->fetchColumn();
+    }
+
+    private function scalarString(string $sql): ?string
+    {
+        $value = $this->pdo()->query($sql)->fetchColumn();
+        if ($value === false || $value === null) {
+            return null;
+        }
+
+        $string = trim((string) $value);
+        return $string === '' ? null : $string;
     }
 
     public static function normalizeSender(string $sender): string

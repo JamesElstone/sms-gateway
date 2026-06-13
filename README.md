@@ -68,9 +68,32 @@ Example:
       "code": "902",
       "label": "disconnected"
     }
+  },
+  "service": {
+    "sms_sync": {
+      "status": "idle",
+      "running": true,
+      "stale": false,
+      "last_heartbeat_at": "2026-06-13T22:30:00+00:00",
+      "last_run_at": "2026-06-13T22:30:00+00:00",
+      "sync_pass_running": false
+    }
+  },
+  "stats": {
+    "sms_cache": {
+      "messages_total": 12,
+      "messages_modem_resident": 8,
+      "read_receipts_total": 17,
+      "newest_cached_at": "2026-06-13T22:29:57+00:00"
+    }
   }
 }
 ```
+
+The status page also reports the SMS sync service heartbeat and local cache
+statistics. `service.sms_sync.status` shows whether the poller has never run,
+is currently in a sync pass, is alive between daemon polls, completed a
+one-shot run, or has gone stale.
 
 ```text
 GET http://<deployed_server_dns_name>/sms-gateway/carriers/
