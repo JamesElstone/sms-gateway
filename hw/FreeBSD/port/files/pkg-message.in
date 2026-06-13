@@ -5,40 +5,24 @@ SMS Gateway has been installed under:
 
   %%WWWDIR%%
 
-To configure a Huawei HiLink LTE dongle now and persist the rc.d settings, run:
+First-time setup:
 
   %%WWWDIR%%/hw/FreeBSD/install-huawei-lte.sh --target hilink
-
-The package creates %%WWWDIR%%/config/local.php from local.php.sample only if it
-is missing, creates %%SMS_GATEWAY_DBDIR%% for the SQLite SMS cache, and creates
-%%SMS_GATEWAY_LOGDIR%% for service logs. Review %%WWWDIR%%/config/local.php
-before testing authenticated endpoints.
-
-The hardware command enables sms_gateway in rc.conf after a successful target
-run.
-
-Create an enabled API token entry:
-
   %%WWWDIR%%/config/set_token.sh
 
-The helper writes %%WWWDIR%%/config/tokens.json with "enabled": true by default.
-Store the generated token securely; only its SHA-256 hash is saved.
+Review %%WWWDIR%%/config/local.php before testing authenticated endpoints.
+The token helper stores only the token's SHA-256 hash; save the generated token.
 
-On subsequent boots, the rc.d service will run the hardware setup automatically,
-prepare sync/read/send log files as www:www 0640, and start the SMS cache sync
-poller as www.
-
-The package also installs a newsyslog policy for the sync, read, and send logs:
+The package creates missing config, database, and log directories, enables
+sms_gateway after successful hardware setup, starts the cache sync poller on
+boot, and installs log rotation policy at:
 
   /usr/local/etc/newsyslog.conf.d/sms-gateway.conf
 
-After log rotation, newsyslog calls the installed helper to run:
-
-  service sms_gateway logrotate
-
-To review status without changing configuration:
+Useful commands:
 
   service sms_gateway status
+  service sms_gateway logrotate
 
 If the APACHE option was enabled, check and reload Apache after configuration:
 
